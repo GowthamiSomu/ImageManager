@@ -1,0 +1,19 @@
+# Core AI/ML Libraries
+deepface==0.0.92
+opencv-python==4.10.0.84
+numpy==1.26.4
+scikit-learn==1.5.2
+
+# Database
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.35
+
+# Configuration
+pyyaml==6.0.2
+
+# Utilities
+pillow==10.4.0
+tqdm==4.66.5
+
+# Logging
+python-json-logger==2.0.7

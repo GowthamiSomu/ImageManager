@@ -1,0 +1,66 @@
+# ImageManager - Face-Based Photo Sorting System Configuration
+
+# Paths
+paths:
+  input_directory: "D:\\Photos"
+  output_directory: "D:\\Photos\\Organized"
+  
+# Database Configuration
+database:
+  host: "localhost"
+  port: 5432
+  name: "imagemanagerdb"
+  user: "postgres"
+  password: "postgres"  # Change this in production or use environment variable
+
+# AI Model Configuration
+models:
+  detector_backend: "retinaface"  # Face detection model
+  model_name: "ArcFace"           # Face recognition/embedding model
+  
+# AI Service Configuration (Stage 5)
+ai_service:
+  use_remote: false               # Use remote AI service instead of local processing
+  url: "http://localhost:8000"    # AI service URL (when use_remote=true)
+  
+# Clustering Parameters
+clustering:
+  similarity_threshold: 0.50  # Cosine similarity for same person (lowered to accommodate pose/lighting variation)
+  min_face_quality: 0.5       # Minimum quality score to include face
+  dbscan_eps: 0.15            # DBSCAN epsilon (1 - similarity_threshold)
+  dbscan_min_samples: 1       # Minimum samples to form cluster
+  
+# Identity Assignment (Stage 4 - Multiple Embeddings)
+identity:
+  max_comparison_embeddings: 5  # Max embeddings to compare per person (uses top N by quality)
+  use_enhanced_matching: true   # Use multi-embedding matching (Stage 4 feature)
+  
+# FAISS Configuration (Stage 6 - Vector Search)
+faiss:
+  enabled: false                # Use FAISS for fast similarity search
+  index_type: "IVFFlat"        # Index type: "Flat", "IVFFlat", "HNSW"
+  nlist: 100                   # Number of clusters for IVF index
+  search_k: 10                 # Number of candidates to retrieve
+  use_gpu: false               # Use GPU acceleration (requires faiss-gpu)
+  index_path: "data/faiss.index"  # Path to save/load FAISS index
+  
+# Folder Organization
+organization:
+  max_persons_named: 3        # Maximum persons before using group naming
+  group_prefix: "G"           # Prefix for group folders (G001, G002, etc.)
+  person_id_format: "{:03d}"  # Format for person IDs (001, 002, etc.)
+  copy_images: true           # If true, copy images; if false, move images
+  append_file_size: true      # Append actual file size to filename (e.g., _4_2MB.jpg)
+  
+# Processing
+processing:
+  batch_size: 10              # Images to process before committing to DB
+  skip_existing: true         # Skip already processed images
+  auto_merge_duplicates: true  # Automatically detect and merge duplicates before organizing
+  auto_merge_threshold: 0.80   # Minimum similarity for auto-merge (high confidence only)
+  auto_merge_min_match_ratio: 0.5  # Minimum ratio of matching embeddings required
+  
+# Logging
+logging:
+  level: "INFO"               # DEBUG, INFO, WARNING, ERROR
+  log_file: "imagemanager.log"
