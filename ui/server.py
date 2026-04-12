@@ -84,6 +84,22 @@ def _image_dict(row) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Root & Static Files
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/")
+@app.get("/index.html")
+def root():
+    """Serve the HTML dashboard."""
+    try:
+        ui_path = Path(__file__).parent / "index.html"
+        return send_file(str(ui_path), mimetype="text/html")
+    except Exception as e:
+        logger.error(f"Failed to serve index.html: {e}")
+        return jsonify({"error": "Dashboard not found"}), 404
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # /api/stats
 # ─────────────────────────────────────────────────────────────────────────────
 

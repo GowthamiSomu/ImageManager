@@ -323,10 +323,11 @@ class FaceRepository:
         k: int = 10,
         threshold: Optional[float] = None
     ) -> List[Tuple[int, int, float]]:
-        """Find nearest face embeddings using pgvector ANN search.
+        """Find nearest person clusters using pgvector ANN search on cluster centers.
         
         Uses the pgvector <=> cosine distance operator for efficient ANN search.
-        Requires pgvector index to be created on the embedding column.
+        Compares against CLUSTER CENTERS (not individual faces) to find the best person match.
+        Requires pgvector HNSW index to be created on the center_embedding column.
         
         Args:
             query_embedding: Query embedding vector (512-dim)
@@ -342,24 +343,30 @@ class FaceRepository:
         # Convert query embedding to list for pgvector
         query_list = query_embedding.astype(np.float32).tolist()
         
-        # Build the query using pgvector cosine distance operator (<=>)
+        # CRITICAL FIX: Compare against CLUSTER CENTERS (not individual face embeddings)
+        # This ensures we find the best PERSON match, not just similarity to any face
         # The <=> operator returns cosine_distance = 1 - cosine_similarity
         # Cast the distance result to Float to prevent pgvector processor from interfering
         query = self.session.query(
-            FaceDB.face_id,
-            FaceDB.cluster_id,
+            ClusterDB.cluster_id,
             ClusterDB.person_id,
-            cast(FaceDB.embedding.op('<=>')(query_list), Float).label('distance')
-        ).join(
-            ClusterDB, FaceDB.cluster_id == ClusterDB.cluster_id
+            cast(ClusterDB.center_embedding.op('<=>')(query_list), Float).label('distance')
         ).order_by(
             text('distance')
-        ).limit(k)
+        ).limit(k * 2)  # Get extra results since we'll deduplicate by person
         
         results = []
-        for face_id, cluster_id, person_id, distance in query:
+        seen_persons = set()
+        
+        for cluster_id, person_id, distance in query:
             if threshold is None or distance <= threshold:
-                results.append((person_id, cluster_id, float(distance)))
+                # Only return first cluster per person (to avoid duplicates)
+                if person_id not in seen_persons:
+                    results.append((person_id, cluster_id, float(distance)))
+                    seen_persons.add(person_id)
+                    if len(results) >= k:
+                        break
+        
         
         return results
 
