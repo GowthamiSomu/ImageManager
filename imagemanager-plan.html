@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ImageManager — Rebuild Plan</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;500;600;700;800&display=swap');
+
+  :root {
+    --bg: #0b0c0e;
+    --surface: #111317;
+    --border: #1e2128;
+    --border-light: #2a2e38;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --accent: #f0c040;
+    --accent2: #3b82f6;
+    --accent3: #10b981;
+    --accent4: #f43f5e;
+    --accent5: #8b5cf6;
+    --mono: 'DM Mono', monospace;
+    --display: 'Syne', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 48px 64px 40px;
+    position: relative;
+    overflow: hidden;
+  }
+  header::before {
+    content: '';
+    position: absolute;
+    top: -60px; left: -60px;
+    width: 400px; height: 400px;
+    background: radial-gradient(circle, rgba(240,192,64,0.07) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid rgba(240,192,64,0.3);
+    padding: 3px 10px;
+    border-radius: 2px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-family: var(--display);
+    font-size: clamp(32px, 5vw, 58px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    max-width: 700px;
+  }
+  h1 span { color: var(--accent); }
+  .subtitle {
+    margin-top: 16px;
+    color: var(--muted);
+    max-width: 560px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .meta-row {
+    display: flex;
+    gap: 32px;
+    margin-top: 28px;
+    flex-wrap: wrap;
+  }
+  .meta-item { display: flex; flex-direction: column; gap: 2px; }
+  .meta-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .meta-value { font-size: 13px; color: var(--text); }
+
+  /* LAYOUT */
+  main { max-width: 1200px; margin: 0 auto; padding: 0 64px 80px; }
+
+  /* SECTIONS */
+  section { margin-top: 64px; }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 28px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+  h2 {
+    font-family: var(--display);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text);
+  }
+
+  /* DIAGNOSTIC GRID */
+  .diag-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+  .diag-card {
+    background: var(--surface);
+    padding: 20px 22px;
+    position: relative;
+  }
+  .diag-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+  }
+  .diag-card.critical::before { background: var(--accent4); }
+  .diag-card.warning::before { background: var(--accent); }
+  .diag-card.info::before { background: var(--accent2); }
+  .diag-title {
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .pill {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    font-family: var(--mono);
+  }
+  .pill.critical { background: rgba(244,63,94,0.15); color: var(--accent4); }
+  .pill.warning { background: rgba(240,192,64,0.12); color: var(--accent); }
+  .pill.info { background: rgba(59,130,246,0.12); color: var(--accent2); }
+  .diag-body { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .diag-body code {
+    font-family: var(--mono);
+    color: var(--text);
+    background: rgba(255,255,255,0.05);
+    padding: 1px 5px;
+    border-radius: 2px;
+    font-size: 11px;
+  }
+
+  /* COMPARISON TABLE */
+  .compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .compare-table thead {
+    background: var(--surface);
+  }
+  .compare-table th {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 11px;
+    text-align: left;
+    padding: 12px 16px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+  }
+  .compare-table td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .compare-table tr:last-child td { border-bottom: none; }
+  .compare-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .old { color: var(--accent4); }
+  .new { color: var(--accent3); }
+  .compare-table td code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+  /* ARCH DIAGRAM */
+  .arch-box {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 32px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 2;
+    color: var(--text);
+    overflow-x: auto;
+  }
+  .arch-box .layer {
+    margin-bottom: 20px;
+    padding-bottom: 20px;
+    border-bottom: 1px dashed var(--border-light);
+  }
+  .arch-box .layer:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .layer-title {
+    font-family: var(--display);
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .arch-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .arch-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid;
+    padding: 4px 12px;
+    border-radius: 3px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .arch-node.input { border-color: rgba(59,130,246,0.4); color: var(--accent2); }
+  .arch-node.proc { border-color: rgba(240,192,64,0.4); color: var(--accent); }
+  .arch-node.store { border-color: rgba(16,185,129,0.4); color: var(--accent3); }
+  .arch-node.out { border-color: rgba(139,92,246,0.4); color: var(--accent5); }
+  .arch-node.removed { border-color: rgba(244,63,94,0.2); color: var(--accent4); text-decoration: line-through; opacity: 0.6; }
+  .arrow { color: var(--muted); font-size: 14px; }
+
+  /* PHASE CARDS */
+  .phase-list { display: flex; flex-direction: column; gap: 2px; }
+  .phase-card {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .phase-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(255,255,255,0.015);
+  }
+  .phase-num {
+    font-family: var(--display);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    min-width: 60px;
+  }
+  .phase-title {
+    font-family: var(--display);
+    font-size: 15px;
+    font-weight: 700;
+    flex: 1;
+  }
+  .phase-effort {
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--border-light);
+    padding: 2px 10px;
+    border-radius: 2px;
+  }
+  .phase-body { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .phase-body.single { grid-template-columns: 1fr; }
+  .phase-col h4 {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .task-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .task-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .task-list li::before {
+    content: '→';
+    color: var(--accent);
+    flex-shrink: 0;
+    margin-top: 1px;
+    font-size: 11px;
+  }
+  .task-list li code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: rgba(255,255,255,0.06);
+    padding: 1px 5px;
+    border-radius: 2px;
+    color: var(--accent);
+  }
+
+  /* MODEL TABLE */
+  .model-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+  .model-card {
+    background: var(--surface);
+    padding: 20px;
+  }
+  .model-name {
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .model-role {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  .model-stats { display: flex; flex-direction: column; gap: 5px; }
+  .model-stat {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .model-stat:last-child { border-bottom: none; }
+  .stat-key { color: var(--muted); }
+  .stat-val { color: var(--text); }
+  .stat-val.good { color: var(--accent3); }
+  .stat-val.warn { color: var(--accent); }
+  .stat-val.cost { color: var(--accent4); }
+
+  /* RISK TABLE */
+  .risk-row { display: flex; gap: 0; border: 1px solid var(--border); margin-bottom: 1px; }
+  .risk-severity {
+    width: 4px;
+    flex-shrink: 0;
+  }
+  .risk-severity.high { background: var(--accent4); }
+  .risk-severity.med { background: var(--accent); }
+  .risk-severity.low { background: var(--accent3); }
+  .risk-content { padding: 12px 16px; flex: 1; display: grid; grid-template-columns: 2fr 3fr 2fr; gap: 16px; background: var(--surface); }
+  .risk-label { font-family: var(--display); font-size: 12px; font-weight: 600; }
+  .risk-desc { font-size: 12px; color: var(--muted); }
+  .risk-mitigation { font-size: 12px; color: var(--accent3); }
+
+  /* CODE BLOCK */
+  .code-block {
+    background: #0d0f12;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 20px 24px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.8;
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  .code-block .cm { color: #5a6478; }
+  .code-block .kw { color: #79b8ff; }
+  .code-block .fn { color: var(--accent); }
+  .code-block .st { color: var(--accent3); }
+  .code-block .nu { color: var(--accent5); }
+  .code-block .ty { color: var(--accent2); }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 24px 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  /* RESPONSIVE */
+  @media (max-width: 768px) {
+    header, main, footer { padding-left: 20px; padding-right: 20px; }
+    h1 { font-size: 28px; }
+    .phase-body { grid-template-columns: 1fr; }
+    .risk-content { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="tag">Technical Rebuild Plan · 2026</div>
+  <h1>ImageManager<br><span>Zero-Cost Rebuild</span></h1>
+  <p class="subtitle">A complete diagnosis of the existing codebase and a phased implementation roadmap to deliver an offline, zero-cost, production-grade face-based photo organizer.</p>
+  <div class="meta-row">
+    <div class="meta-item"><span class="meta-label">Target Cost</span><span class="meta-value">$0.00 / month</span></div>
+    <div class="meta-item"><span class="meta-label">Architecture</span><span class="meta-value">Monolith → Lean Service</span></div>
+    <div class="meta-item"><span class="meta-label">DB</span><span class="meta-value">PostgreSQL + pgvector</span></div>
+    <div class="meta-item"><span class="meta-label">Runtime</span><span class="meta-value">Python 3.11+</span></div>
+    <div class="meta-item"><span class="meta-label">AI Stack</span><span class="meta-value">InsightFace / ONNX</span></div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ═══════════════════════════════════════ SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">01 /</span>
+      <h2>Codebase Diagnosis — What's Actually Broken</h2>
+    </div>
+
+    <div class="diag-grid">
+
+      <div class="diag-card critical">
+        <div class="diag-title">DeepFace dual-pipeline mismatch <span class="pill critical">critical</span></div>
+        <div class="diag-body">
+          <code>SimplifiedFaceService</code> calls <code>DeepFace.represent()</code> for embedding <em>and</em> relies on the old <code>FaceDetectionService</code> which calls <code>extract_faces()</code> separately. The two preprocessing paths produce inconsistent embeddings for the same face — this is the <strong>primary cause of person fragmentation</strong> (same person → multiple IDs).
+        </div>
+      </div>
+
+      <div class="diag-card critical">
+        <div class="diag-title">Threshold calibration mismatch <span class="pill critical">critical</span></div>
+        <div class="diag-body">
+          Config sets <code>similarity_threshold: 0.50</code> but <code>IdentityAssignmentService</code> defaults to <code>0.80</code>. The <code>EnhancedIdentityAssignmentService</code> calls <code>embedding_service.cosine_similarity()</code>, which is not defined on <code>EmbeddingService</code> — it exists only on <code>SimplifiedFaceService</code>. This causes an <strong>AttributeError at runtime</strong> when Stage 4 is enabled.
+        </div>
+      </div>
+
+      <div class="diag-card critical">
+        <div class="diag-title">pickle embedding serialization <span class="pill critical">critical</span></div>
+        <div class="diag-body">
+          All 512-dim vectors are stored with Python's <code>pickle</code> into <code>LargeBinary</code> columns. This is version-fragile, slow for bulk loads, and makes vector similarity search impossible in SQL. A full table scan + deserialize happens <strong>for every new face processed</strong> — O(n·F) where F = faces per person.
+        </div>
+      </div>
+
+      <div class="diag-card critical">
+        <div class="diag-title">FAISS wired but unusable <span class="pill critical">critical</span></div>
+        <div class="diag-body">
+          <code>FAISSVectorStore</code> is built and integrated in <code>main.py</code> but <code>search_by_person()</code> references an undefined <code>Dict</code> type (missing import). The FAISS IVF index also requires training on ≥ <code>nlist</code> vectors before any search — this is not handled, causing a <strong>silent crash</strong> on cold start.
+        </div>
+      </div>
+
+      <div class="diag-card warning">
+        <div class="diag-title">DeepFace is a heavyweight wrong tool <span class="pill warning">architecture</span></div>
+        <div class="diag-body">
+          DeepFace downloads and wraps TensorFlow/Keras models at ~600 MB+ (ArcFace weights). It adds TF overhead, has no ONNX path, and mixes detection + embedding in an opaque pipeline. <strong>InsightFace</strong> with its ONNX buffalo_l pack is faster, smaller, more accurate, and gives direct control over each stage.
+        </div>
+      </div>
+
+      <div class="diag-card warning">
+        <div class="diag-title">Auto-merge runs in-session mid-pipeline <span class="pill warning">logic</span></div>
+        <div class="diag-body">
+          <code>detect_and_merge_duplicates()</code> is called inside the same DB session as ingestion. If a merge commits and fails mid-way, partial merges leave orphaned <code>ClusterDB</code> rows. The image→person remapping after a merge uses a raw SQLAlchemy query with a missing model alias (<code>cluster_repo.Cluster</code> doesn't exist as a property).
+        </div>
+      </div>
+
+      <div class="diag-card warning">
+        <div class="diag-title">PersonRepository.get_by_name missing <span class="pill warning">runtime error</span></div>
+        <div class="diag-body">
+          <code>scripts/rename_person.py</code> and <code>merge_persons.py</code> both call <code>person_repo.get_by_name()</code> but this method is not defined in <code>PersonRepository</code> — only <code>get_by_id()</code> exists. All rename and manual merge scripts will <strong>crash immediately</strong>.
+        </div>
+      </div>
+
+      <div class="diag-card warning">
+        <div class="diag-title">Quality score formula is naive <span class="pill warning">accuracy</span></div>
+        <div class="diag-body">
+          <code>SimplifiedFaceService</code> computes quality as <code>min(1.0, face_area / 10000)</code> — a 100×100 pixel face scores 1.0. This produces uniform high-quality scores for most faces and makes quality-weighted selection in Stage 4 useless. Blur detection (Laplacian variance) in <code>FaceDetectionService</code> is never called by the simplified path.
+        </div>
+      </div>
+
+      <div class="diag-card info">
+        <div class="diag-title">FaceRepository missing get_by_image <span class="pill info">missing method</span></div>
+        <div class="diag-body">
+          <code>main.py</code> calls <code>face_repo.get_by_image(img_record.image_id)</code> in the auto-merge remapping block — this method does not exist in <code>FaceRepository</code>. Dead code path that errors silently only when auto-merge fires.
+        </div>
+      </div>
+
+      <div class="diag-card info">
+        <div class="diag-title">Config get() returns wrong types <span class="pill info">subtle</span></div>
+        <div class="diag-body">
+          YAML parses numeric port as <code>int</code>, but <code>config.get()</code> returns raw values without coercion. When env-var override sets <code>DB_PORT</code> as string, SQLAlchemy connection fails with a type error. The <code>ClusteringService</code> receives <code>similarity_threshold=0.70</code> from config but uses <code>0.85</code> internally in <code>merge_clusters()</code>.
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">02 /</span>
+      <h2>Current vs. Target Architecture</h2>
+    </div>
+
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Concern</th>
+          <th class="old">Current (Broken)</th>
+          <th class="new">Target (Fixed)</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Face Detection</td>
+          <td class="old"><code>DeepFace.extract_faces()</code><br>RetinaFace via TF/Keras</td>
+          <td class="new"><code>InsightFace</code> buffalo_l<br>SCRFD detector, ONNX runtime</td>
+          <td>3× faster, 40% smaller, direct control, no TF dependency</td>
+        </tr>
+        <tr>
+          <td>Face Embedding</td>
+          <td class="old"><code>DeepFace.represent()</code><br>ArcFace via TF/Keras (512d)</td>
+          <td class="new">InsightFace ArcFace R100<br>ONNX runtime (512d)</td>
+          <td>Same accuracy, consistent preprocessing, same pipeline as detection</td>
+        </tr>
+        <tr>
+          <td>Vector Storage</td>
+          <td class="old"><code>pickle.dumps()</code> into <code>LargeBinary</code><br>Full deserialize per query</td>
+          <td class="new"><code>pgvector</code> <code>VECTOR(512)</code> column<br>ANN index in SQL</td>
+          <td>Native similarity search, no deserialize loop, SQL operators work</td>
+        </tr>
+        <tr>
+          <td>Identity Lookup</td>
+          <td class="old">O(n·F) Python loop over all faces<br>Broken FAISS integration</td>
+          <td class="new"><code>pgvector</code> cosine ANN<br><code>&lt;=&gt;</code> operator with <code>ivfflat</code> index</td>
+          <td>Zero external index, scales to millions, lives in the DB</td>
+        </tr>
+        <tr>
+          <td>Identity Assignment</td>
+          <td class="old">3 separate service classes<br>Inconsistent threshold values<br>Missing method errors</td>
+          <td class="new">Single <code>IdentityService</code><br>One threshold source (config)<br>Clean interface contract</td>
+          <td>Eliminates fragmentation from mismatched thresholds</td>
+        </tr>
+        <tr>
+          <td>Quality Score</td>
+          <td class="old">Face area / 10000<br>Always near 1.0</td>
+          <td class="new">Laplacian variance + face size + InsightFace det_score</td>
+          <td>Real signal for quality-weighted matching in multi-embedding</td>
+        </tr>
+        <tr>
+          <td>Auto-Merge</td>
+          <td class="old">Mid-session, partial commits<br>Broken remapping code</td>
+          <td class="new">Separate CLI job, own transaction<br>Post-merge full re-org</td>
+          <td>Safe, auditable, no partial state corruption</td>
+        </tr>
+        <tr>
+          <td>DB Schema</td>
+          <td class="old">No index on embeddings<br>No FK cascade</td>
+          <td class="new">pgvector IVFFlat index<br>Cascade deletes on person</td>
+          <td>Query performance, referential integrity</td>
+        </tr>
+        <tr>
+          <td>AI Microservice</td>
+          <td class="old">FastAPI Docker + DeepFace<br>Adds 600 MB container</td>
+          <td class="new">Removed — ONNX runs in-process<br>No Docker needed</td>
+          <td>Zero cost, simpler ops, same performance</td>
+        </tr>
+        <tr>
+          <td>FAISS</td>
+          <td class="old">Broken (missing import, untrained IVF)<br>Duplicate of pgvector</td>
+          <td class="new">Removed — pgvector replaces it<br>Optional: keep for GPU-only path</td>
+          <td>One search backend, no sync issues</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 3 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">03 /</span>
+      <h2>New Architecture — Data Flow</h2>
+    </div>
+
+    <div class="arch-box">
+      <div class="layer">
+        <div class="layer-title">Input Layer</div>
+        <div class="arch-row">
+          <span class="arch-node input">📁 Image Files (.jpg/.png)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node input">Image Scanner</span>
+          <span class="arrow">→</span>
+          <span class="arch-node store">ImageDB (skip if exists)</span>
+        </div>
+      </div>
+      <div class="layer">
+        <div class="layer-title">AI Layer (ONNX, in-process, no Docker)</div>
+        <div class="arch-row">
+          <span class="arch-node proc">SCRFD Face Detector</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">Face Aligner (5-point landmarks)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">ArcFace R100 Embedder (512d, ONNX)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">Quality Scorer (blur + size + det_score)</span>
+        </div>
+      </div>
+      <div class="layer">
+        <div class="layer-title">Identity Layer</div>
+        <div class="arch-row">
+          <span class="arch-node store">pgvector ANN search (&lt;=&gt; cosine)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">Threshold check (single config value)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">Assign to Person OR Create New</span>
+          <span class="arrow">→</span>
+          <span class="arch-node store">FaceDB + VECTOR(512) + cluster update</span>
+        </div>
+      </div>
+      <div class="layer">
+        <div class="layer-title">Organization Layer</div>
+        <div class="arch-row">
+          <span class="arch-node proc">Person Name Resolver</span>
+          <span class="arrow">→</span>
+          <span class="arch-node proc">Folder Name Generator (001_002 / G001)</span>
+          <span class="arrow">→</span>
+          <span class="arch-node out">📂 Organized Output Folders</span>
+        </div>
+      </div>
+      <div class="layer">
+        <div class="layer-title">Removed Components (were broken/redundant)</div>
+        <div class="arch-row">
+          <span class="arch-node removed">DeepFace + TensorFlow</span>
+          <span class="arch-node removed">FAISS Vector Store</span>
+          <span class="arch-node removed">FastAPI AI Microservice</span>
+          <span class="arch-node removed">pickle LargeBinary</span>
+          <span class="arch-node removed">EnhancedIdentityAssignment (reimpl.)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">04 /</span>
+      <h2>Open-Source Model Stack — Zero Cost</h2>
+    </div>
+
+    <div class="model-grid">
+
+      <div class="model-card">
+        <div class="model-name">InsightFace buffalo_l</div>
+        <div class="model-role">Detection + Embedding Pack</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">Detection Model</span><span class="stat-val">SCRFD 10GF</span></div>
+          <div class="model-stat"><span class="stat-key">Embedding Model</span><span class="stat-val">ArcFace R100 (512d)</span></div>
+          <div class="model-stat"><span class="stat-key">Runtime</span><span class="stat-val good">ONNX Runtime (CPU/GPU)</span></div>
+          <div class="model-stat"><span class="stat-key">Model Size</span><span class="stat-val warn">~320 MB (auto-download once)</span></div>
+          <div class="model-stat"><span class="stat-key">License</span><span class="stat-val good">MIT</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0 — fully offline</span></div>
+          <div class="model-stat"><span class="stat-key">vs DeepFace</span><span class="stat-val good">3× faster inference, consistent pipeline</span></div>
+        </div>
+      </div>
+
+      <div class="model-card">
+        <div class="model-name">pgvector</div>
+        <div class="model-role">Vector Similarity Search in Postgres</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">Extension</span><span class="stat-val">pgvector 0.7+</span></div>
+          <div class="model-stat"><span class="stat-key">Index Type</span><span class="stat-val">IVFFlat (ANN)</span></div>
+          <div class="model-stat"><span class="stat-key">Operator</span><span class="stat-val good">&lt;=&gt; cosine distance</span></div>
+          <div class="model-stat"><span class="stat-key">Max Dim</span><span class="stat-val">2000 (512 needed)</span></div>
+          <div class="model-stat"><span class="stat-key">License</span><span class="stat-val good">PostgreSQL License</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0 — replaces FAISS entirely</span></div>
+          <div class="model-stat"><span class="stat-key">vs FAISS</span><span class="stat-val good">No sync issues, lives in DB, transactional</span></div>
+        </div>
+      </div>
+
+      <div class="model-card">
+        <div class="model-name">onnxruntime-cpu</div>
+        <div class="model-role">Inference Runtime</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">Package</span><span class="stat-val">onnxruntime / onnxruntime-gpu</span></div>
+          <div class="model-stat"><span class="stat-key">CPU Backends</span><span class="stat-val good">OpenVINO, TVM, DirectML</span></div>
+          <div class="model-stat"><span class="stat-key">GPU</span><span class="stat-val">CUDA 12 / TensorRT (optional)</span></div>
+          <div class="model-stat"><span class="stat-key">License</span><span class="stat-val good">MIT</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0</span></div>
+          <div class="model-stat"><span class="stat-key">vs TF/Keras</span><span class="stat-val good">No 600MB TF install, faster cold start</span></div>
+        </div>
+      </div>
+
+      <div class="model-card">
+        <div class="model-name">Aliyun MNN (Optional)</div>
+        <div class="model-role">Ultra-lightweight Inference</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">Use Case</span><span class="stat-val">Raspberry Pi / low-RAM</span></div>
+          <div class="model-stat"><span class="stat-key">Model</span><span class="stat-val">MobileFaceNet (128d)</span></div>
+          <div class="model-stat"><span class="stat-key">RAM</span><span class="stat-val good">&lt; 200 MB</span></div>
+          <div class="model-stat"><span class="stat-key">Accuracy</span><span class="stat-val warn">Lower than ArcFace R100</span></div>
+          <div class="model-stat"><span class="stat-key">License</span><span class="stat-val good">Apache 2.0</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0</span></div>
+        </div>
+      </div>
+
+      <div class="model-card">
+        <div class="model-name">PostgreSQL 16 + Docker</div>
+        <div class="model-role">Database (pgvector pre-installed image)</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">Image</span><span class="stat-val good">pgvector/pgvector:pg16</span></div>
+          <div class="model-stat"><span class="stat-key">Replaces</span><span class="stat-val">manual pgvector install</span></div>
+          <div class="model-stat"><span class="stat-key">One Command</span><span class="stat-val good">docker run pgvector/pgvector:pg16</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0</span></div>
+        </div>
+      </div>
+
+      <div class="model-card">
+        <div class="model-name">SQLAlchemy 2 + psycopg3</div>
+        <div class="model-role">ORM + pgvector Python Bridge</div>
+        <div class="model-stats">
+          <div class="model-stat"><span class="stat-key">ORM</span><span class="stat-val">SQLAlchemy 2.x (async-ready)</span></div>
+          <div class="model-stat"><span class="stat-key">pgvector type</span><span class="stat-val good">pgvector.sqlalchemy.Vector</span></div>
+          <div class="model-stat"><span class="stat-key">Driver</span><span class="stat-val">psycopg2-binary (existing)</span></div>
+          <div class="model-stat"><span class="stat-key">Migration</span><span class="stat-val warn">Add CREATE EXTENSION vector + ALTER TABLE</span></div>
+          <div class="model-stat"><span class="stat-key">Cost</span><span class="stat-val good">$0</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 5 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">05 /</span>
+      <h2>Implementation Phases</h2>
+    </div>
+
+    <div class="phase-list">
+
+      <!-- PHASE 1 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 1</span>
+          <span class="phase-title">Fix Critical Bugs & Stabilise Existing Code</span>
+          <span class="phase-effort">~1–2 days</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <h4>Files to Fix</h4>
+            <ul class="task-list">
+              <li>Add <code>get_by_name()</code> to <code>PersonRepository</code> (exact + case-insensitive match)</li>
+              <li>Add <code>get_by_image()</code> to <code>FaceRepository</code></li>
+              <li>Add <code>cosine_similarity()</code> to <code>EmbeddingService</code> (was only on SimplifiedFaceService)</li>
+              <li>Fix <code>FAISSVectorStore.search_by_person()</code>: add <code>from typing import Dict</code></li>
+              <li>Fix FAISS cold-start: skip search if <code>index.ntotal == 0</code></li>
+              <li>Unify <code>similarity_threshold</code>: remove all hardcoded defaults, always read from config</li>
+            </ul>
+          </div>
+          <div class="phase-col">
+            <h4>Config Fixes</h4>
+            <ul class="task-list">
+              <li>Single source of truth for threshold in <code>config.yaml</code></li>
+              <li>Add type coercion in <code>Config.get()</code> for <code>int</code>, <code>float</code>, <code>bool</code></li>
+              <li>Remove <code>auto_merge_duplicates: true</code> from default config (too risky as default)</li>
+              <li>Add <code>ClusteringService</code> tests to verify DBSCAN output</li>
+              <li>Add <code>migration_v2.sql</code>: run without breaking existing data</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 2 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 2</span>
+          <span class="phase-title">Replace DeepFace with InsightFace (ONNX)</span>
+          <span class="phase-effort">~2–3 days</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <h4>New Service: <code>insight_face_service.py</code></h4>
+            <ul class="task-list">
+              <li>Install: <code>pip install insightface onnxruntime</code></li>
+              <li>Init: <code>FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])</code></li>
+              <li>Single <code>process_image(path)</code> call returns both detection + embedding</li>
+              <li>Expose: <code>embedding</code>, <code>det_score</code>, <code>bbox</code>, <code>kps</code> (landmarks)</li>
+              <li>Quality: <code>det_score × laplacian_clipped × size_ratio</code> — real three-factor score</li>
+              <li>Implement <code>calculate_similarity(e1, e2)</code> using <code>np.dot</code> (L2-normalized)</li>
+            </ul>
+          </div>
+          <div class="phase-col">
+            <h4>Deprecate</h4>
+            <ul class="task-list">
+              <li>Remove <code>services/face_detection_service.py</code></li>
+              <li>Remove <code>services/simplified_face_service.py</code></li>
+              <li>Remove <code>services/embedding_service.py</code></li>
+              <li>Remove <code>services/http_face_service.py</code></li>
+              <li>Remove <code>ai_service/</code> directory entirely</li>
+              <li>Remove <code>deepface</code>, <code>tensorflow</code>, <code>keras</code> from requirements</li>
+              <li>Update <code>main.py</code>: replace <code>SimplifiedFaceService</code> with <code>InsightFaceService</code></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 3 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 3</span>
+          <span class="phase-title">Migrate to pgvector for Vector Storage & Search</span>
+          <span class="phase-effort">~2–3 days</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <h4>Database Changes</h4>
+            <ul class="task-list">
+              <li>Use Docker image <code>pgvector/pgvector:pg16</code></li>
+              <li>Run <code>CREATE EXTENSION IF NOT EXISTS vector;</code> in init script</li>
+              <li>Add <code>pip install pgvector</code></li>
+              <li>Change <code>FaceDB.embedding</code>: <code>LargeBinary</code> → <code>Vector(512)</code></li>
+              <li>Change <code>ClusterDB.center_embedding</code>: <code>LargeBinary</code> → <code>Vector(512)</code></li>
+              <li>Migration script: deserialize existing pickles → insert as vectors</li>
+              <li>Add <code>CREATE INDEX ON faces USING ivfflat (embedding vector_cosine_ops) WITH (lists=100);</code></li>
+            </ul>
+          </div>
+          <div class="phase-col">
+            <h4>Repository Changes</h4>
+            <ul class="task-list">
+              <li>Remove all <code>pickle.dumps/loads</code> from repositories</li>
+              <li>Add <code>FaceRepository.find_nearest(embedding, k, threshold)</code> using <code>&lt;=&gt;</code></li>
+              <li>Return <code>(person_id, cluster_id, distance)</code> from ANN search</li>
+              <li>Remove <code>services/faiss_vector_store.py</code></li>
+              <li>Remove <code>services/faiss_identity_assignment_service.py</code></li>
+              <li>Update <code>ClusterRepository.update_center()</code>: pass <code>np.ndarray</code> directly</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 4 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 4</span>
+          <span class="phase-title">Consolidate Identity Assignment</span>
+          <span class="phase-effort">~1–2 days</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <h4>New <code>IdentityService</code></h4>
+            <ul class="task-list">
+              <li>Single class replaces all three: <code>IdentityAssignmentService</code>, <code>EnhancedIdentityAssignmentService</code>, <code>FAISSIdentityAssignmentService</code></li>
+              <li>Use pgvector ANN for candidate retrieval (fast)</li>
+              <li>Then verify top-K candidates against stored face embeddings (accurate)</li>
+              <li>One threshold value injected from config, nowhere else</li>
+              <li>All DB writes in a single <code>session.flush()</code> per face — no partial commits</li>
+              <li>Return <code>AssignmentResult(person_id, is_new, similarity, cluster_id)</code> dataclass</li>
+            </ul>
+          </div>
+          <div class="phase-col">
+            <h4>Cluster Update Logic</h4>
+            <ul class="task-list">
+              <li>Keep one cluster per person by default (simpler, better)</li>
+              <li>Incremental center: <code>new_center = (old_center × n + new_emb) / (n+1)</code></li>
+              <li>No full re-scan on every new face</li>
+              <li>Recompute center from scratch only on <code>merge_persons</code></li>
+              <li>Quality-weighted top-5 comparisons for multi-embedding match before ANN confirm</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 5 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 5</span>
+          <span class="phase-title">Fix Scripts, CLI & Operational Tooling</span>
+          <span class="phase-effort">~1 day</span>
+        </div>
+        <div class="phase-body single">
+          <div class="phase-col">
+            <h4>All Scripts</h4>
+            <ul class="task-list">
+              <li><code>scripts/rename_person.py</code> — add <code>PersonRepository.get_by_name()</code>, fix crash</li>
+              <li><code>scripts/merge_persons.py</code> — run in isolated transaction, fix <code>get_by_name</code></li>
+              <li><code>scripts/detect_duplicates.py</code> — use pgvector ANN instead of O(n²) loop</li>
+              <li><code>scripts/auto_merge.py</code> — extract to standalone script with its own session, never run mid-pipeline</li>
+              <li><code>scripts/person_stats.py</code> — works as-is after repo fixes</li>
+              <li><code>scripts/reset_db.py</code> — add <code>TRUNCATE ... RESTART IDENTITY CASCADE</code></li>
+              <li>Add <code>scripts/export_faces.py</code>: export face crops per person for visual audit</li>
+              <li>Add <code>scripts/benchmark.py</code>: measure threshold accuracy against a small labeled set</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- PHASE 6 -->
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-num">PHASE 6</span>
+          <span class="phase-title">Performance & Accuracy Tuning</span>
+          <span class="phase-effort">~2–3 days</span>
+        </div>
+        <div class="phase-body">
+          <div class="phase-col">
+            <h4>Accuracy Improvements</h4>
+            <ul class="task-list">
+              <li>Add face alignment normalisation: 5-point Umeyama transform (included in InsightFace)</li>
+              <li>Skip faces with <code>det_score &lt; 0.6</code> (unreliable detections)</li>
+              <li>Use <code>min_quality: 0.4</code> as default (current 0.5 too aggressive for side profiles)</li>
+              <li>For group photos: run one ANN query per face, not per image</li>
+              <li>Add <code>--calibrate</code> mode in benchmark script: find optimal threshold for a labelled folder pair</li>
+            </ul>
+          </div>
+          <div class="phase-col">
+            <h4>Speed Improvements</h4>
+            <ul class="task-list">
+              <li>Batch images in chunks of 8 for InsightFace (reduces Python overhead)</li>
+              <li>Use PostgreSQL <code>COPY</code> for bulk face inserts (10× faster than row-by-row)</li>
+              <li>Lazy-load InsightFace model only once at startup (already done, verify)</li>
+              <li>Add <code>--workers N</code> flag for multi-process image scan (use <code>concurrent.futures</code>)</li>
+              <li>Target: &lt;2 sec/image on CPU, &lt;0.3 sec/image with GPU provider</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 6 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">06 /</span>
+      <h2>Key Code Changes — Before & After</h2>
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin-bottom:16px;">The most impactful single change: replace the identity lookup loop.</p>
+
+    <div class="code-block">
+<span class="cm"># ─── BEFORE: O(n·F) Python loop ────────────────────────────────────────────</span>
+<span class="kw">for</span> person <span class="kw">in</span> existing_persons:
+    person_faces = face_repo.<span class="fn">get_by_person</span>(person.person_id)  <span class="cm"># N DB round-trips</span>
+    <span class="kw">for</span> face <span class="kw">in</span> person_faces:                                 <span class="cm"># deserialise pickle per face</span>
+        similarity = embedding_service.<span class="fn">calculate_similarity</span>(new_embedding, face.embedding)
+        <span class="kw">if</span> similarity > best_similarity:
+            best_similarity = similarity
+            best_person_id = person.person_id
+
+<span class="cm"># ─── AFTER: single pgvector ANN query ─────────────────────────────────────</span>
+<span class="cm"># face_repo.find_nearest() runs this SQL:</span>
+<span class="cm">#   SELECT cluster_id, person_id, (embedding &lt;=&gt; :qvec) AS dist</span>
+<span class="cm">#   FROM faces JOIN clusters USING (cluster_id)</span>
+<span class="cm">#   ORDER BY dist LIMIT :k;</span>
+
+candidates = face_repo.<span class="fn">find_nearest</span>(new_embedding, k=<span class="nu">10</span>, threshold=<span class="nu">1</span> - config_threshold)
+<span class="kw">if</span> candidates:
+    best = candidates[<span class="nu">0</span>]  <span class="cm"># already sorted by cosine distance</span>
+    <span class="fn">assign_to_person</span>(best.person_id, best.cluster_id)
+<span class="kw">else</span>:
+    <span class="fn">create_new_person</span>(new_embedding)
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin-top:20px;margin-bottom:16px;">New DB model — swap LargeBinary for pgvector.</p>
+
+    <div class="code-block">
+<span class="kw">from</span> pgvector.sqlalchemy <span class="kw">import</span> <span class="ty">Vector</span>
+
+<span class="kw">class</span> <span class="ty">FaceDB</span>(Base):
+    __tablename__ = <span class="st">'faces'</span>
+
+    face_id    = Column(<span class="ty">Integer</span>, primary_key=<span class="kw">True</span>, autoincrement=<span class="kw">True</span>)
+    image_id   = Column(<span class="ty">Integer</span>, ForeignKey(<span class="st">'images.image_id'</span>), nullable=<span class="kw">False</span>)
+    cluster_id = Column(<span class="ty">Integer</span>, ForeignKey(<span class="st">'clusters.cluster_id'</span>, ondelete=<span class="st">'CASCADE'</span>))
+    embedding  = Column(<span class="ty">Vector</span>(<span class="nu">512</span>), nullable=<span class="kw">False</span>)   <span class="cm"># ← was LargeBinary (pickle)</span>
+    quality    = Column(<span class="ty">Float</span>, nullable=<span class="kw">False</span>)
+    created_at = Column(<span class="ty">DateTime</span>, server_default=<span class="fn">func.now</span>())
+
+<span class="cm"># Index created once in init_db.py:</span>
+<span class="cm"># CREATE INDEX ON faces USING ivfflat (embedding vector_cosine_ops) WITH (lists=100);</span>
+    </div>
+
+    <p style="color:var(--muted);font-size:12px;margin-top:20px;margin-bottom:16px;">InsightFace service — single pipeline, no preprocessing split.</p>
+
+    <div class="code-block">
+<span class="kw">import</span> insightface, cv2, numpy <span class="kw">as</span> np
+
+<span class="kw">class</span> <span class="ty">InsightFaceService</span>:
+    <span class="kw">def</span> <span class="fn">__init__</span>(self, model_pack=<span class="st">'buffalo_l'</span>, det_size=(<span class="nu">640</span>, <span class="nu">640</span>)):
+        self.app = insightface.app.<span class="ty">FaceAnalysis</span>(
+            name=model_pack,
+            providers=[<span class="st">'CPUExecutionProvider'</span>]  <span class="cm"># swap to CUDAExecutionProvider for GPU</span>
+        )
+        self.app.<span class="fn">prepare</span>(ctx_id=<span class="nu">0</span>, det_size=det_size)
+
+    <span class="kw">def</span> <span class="fn">process_image</span>(self, path: str) -> list[dict]:
+        img = cv2.<span class="fn">imread</span>(path)
+        faces = self.app.<span class="fn">get</span>(img)          <span class="cm"># detect + align + embed in ONE call</span>
+        results = []
+        <span class="kw">for</span> face <span class="kw">in</span> faces:
+            emb = face.embedding / np.<span class="fn">linalg</span>.<span class="fn">norm</span>(face.embedding)  <span class="cm"># L2 normalise</span>
+            quality = <span class="fn">_quality_score</span>(face, img)
+            results.<span class="fn">append</span>({<span class="st">'embedding'</span>: emb, <span class="st">'quality'</span>: quality,
+                             <span class="st">'bbox'</span>: face.bbox, <span class="st">'det_score'</span>: face.det_score})
+        <span class="kw">return</span> results
+
+    <span class="kw">def</span> <span class="fn">_quality_score</span>(face, img) -> float:
+        gray = cv2.<span class="fn">cvtColor</span>(img, cv2.COLOR_BGR2GRAY)
+        x1, y1, x2, y2 = [<span class="fn">int</span>(v) <span class="kw">for</span> v <span class="kw">in</span> face.bbox]
+        crop = gray[y1:y2, x1:x2]
+        blur = <span class="fn">min</span>(cv2.<span class="fn">Laplacian</span>(crop, cv2.CV_64F).<span class="fn">var</span>() / <span class="nu">500.0</span>, <span class="nu">1.0</span>)
+        size = <span class="fn">min</span>((x2-x1) * (y2-y1) / <span class="nu">90000</span>, <span class="nu">1.0</span>)
+        <span class="kw">return</span> <span class="nu">0.5</span> * float(face.det_score) + <span class="nu">0.3</span> * blur + <span class="nu">0.2</span> * size
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 7 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">07 /</span>
+      <h2>New requirements.txt</h2>
+    </div>
+
+    <div class="code-block">
+<span class="cm"># AI / Vision — replaces deepface + tensorflow</span>
+insightface==0.7.3
+onnxruntime==1.19.2          <span class="cm"># CPU; swap to onnxruntime-gpu for CUDA</span>
+opencv-python==4.10.0.84
+numpy==1.26.4
+scikit-learn==1.5.2          <span class="cm"># DBSCAN still used for batch-clustering scripts</span>
+
+<span class="cm"># Database — replaces pickle serialization</span>
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.35
+pgvector==0.3.5              <span class="cm"># pgvector SQLAlchemy type integration</span>
+
+<span class="cm"># Config / Utilities</span>
+pyyaml==6.0.2
+pillow==10.4.0
+tqdm==4.66.5
+python-json-logger==2.0.7
+
+<span class="cm"># Removed: deepface, tensorflow, keras, requests (no more HTTP AI service)</span>
+<span class="cm"># Removed: faiss-cpu (pgvector replaces it)</span>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 8 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">08 /</span>
+      <h2>Risk Register</h2>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity high"></div>
+      <div class="risk-content">
+        <div class="risk-label">Existing pickle data loss</div>
+        <div class="risk-desc">Migration from LargeBinary pickle to pgvector VECTOR(512) requires a one-time conversion script. If it fails mid-way, embeddings are lost.</div>
+        <div class="risk-mitigation">Write migration script with dry-run mode. Keep LargeBinary column as backup for one release cycle. Use pg_dump before migration.</div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity high"></div>
+      <div class="risk-content">
+        <div class="risk-label">InsightFace buffalo_l model download</div>
+        <div class="risk-desc">First run downloads ~320 MB from CDN. Requires internet at setup time. Fails silently if network is flaky.</div>
+        <div class="risk-mitigation">Add <code>scripts/download_models.py</code> as explicit setup step. Document expected model path. Add checksum verification.</div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity med"></div>
+      <div class="risk-content">
+        <div class="risk-label">pgvector IVFFlat requires training</div>
+        <div class="risk-desc">IVFFlat index needs at least <code>lists × 39</code> vectors to be useful (~3900 faces for lists=100). Small datasets get no speedup.</div>
+        <div class="risk-mitigation">Use <code>USING hnsw</code> instead — no training required, good performance at all scales. Switch IVFFlat only for 50k+ faces.</div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity med"></div>
+      <div class="risk-content">
+        <div class="risk-label">Threshold sensitivity</div>
+        <div class="risk-desc">ArcFace R100 similarity distributions differ slightly between DeepFace and InsightFace preprocessing. Current threshold (0.50) may fragment or over-merge.</div>
+        <div class="risk-mitigation">Add benchmark script. Default 0.45 is safer for InsightFace cosine. Document tuning guide in README.</div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity low"></div>
+      <div class="risk-content">
+        <div class="risk-label">Windows path handling</div>
+        <div class="risk-desc">Config uses hardcoded Windows paths (<code>D:\\Photos</code>). Cross-platform users will hit config issues.</div>
+        <div class="risk-mitigation">Use <code>pathlib.Path</code> throughout (already done). Add platform-agnostic default paths in config template.</div>
+      </div>
+    </div>
+
+    <div class="risk-row">
+      <div class="risk-severity low"></div>
+      <div class="risk-content">
+        <div class="risk-label">ONNX CPU speed on large photo libraries</div>
+        <div class="risk-desc">InsightFace on CPU: ~1–3 sec/face. 5000 photos × avg 2 faces = ~3–8 hours on CPU.</div>
+        <div class="risk-mitigation">Add GPU provider docs. Add <code>--workers</code> parallelism flag. Progress bar + resume support already via <code>skip_existing</code>.</div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ═══════════════════════════════════════ SECTION 9 -->
+  <section>
+    <div class="section-header">
+      <span class="section-num">09 /</span>
+      <h2>Recommended File Structure After Rebuild</h2>
+    </div>
+
+    <div class="code-block">
+ImageManager/
+├── domain/
+│   └── models.py                    <span class="cm"># unchanged</span>
+├── infrastructure/
+│   ├── config.py                    <span class="cm"># add type coercion</span>
+│   ├── logging.py                   <span class="cm"># unchanged</span>
+│   └── database/
+│       ├── models.py                <span class="cm"># Vector(512) replaces LargeBinary</span>
+│       ├── repositories.py          <span class="cm"># add get_by_name, get_by_image, find_nearest</span>
+│       └── connection.py            <span class="cm"># add CREATE EXTENSION vector</span>
+├── services/
+│   ├── insight_face_service.py      <span class="cm"># NEW — replaces 4 old services</span>
+│   ├── identity_service.py          <span class="cm"># NEW — replaces 3 old identity services</span>
+│   ├── clustering_service.py        <span class="cm"># keep, minor threshold fix</span>
+│   ├── person_service.py            <span class="cm"># keep, unchanged</span>
+│   ├── folder_organizer_service.py  <span class="cm"># keep, unchanged</span>
+│   └── auto_merge_service.py        <span class="cm"># keep, fix transaction isolation</span>
+├── scripts/
+│   ├── init_db.py                   <span class="cm"># add pgvector extension + HNSW index</span>
+│   ├── migrate_embeddings.py        <span class="cm"># NEW — pickle → pgvector migration</span>
+│   ├── download_models.py           <span class="cm"># NEW — explicit model setup step</span>
+│   ├── person_stats.py              <span class="cm"># keep</span>
+│   ├── rename_person.py             <span class="cm"># fix get_by_name crash</span>
+│   ├── merge_persons.py             <span class="cm"># fix get_by_name crash</span>
+│   ├── detect_duplicates.py         <span class="cm"># use pgvector ANN</span>
+│   ├── auto_merge.py                <span class="cm"># keep, own session</span>
+│   ├── export_faces.py              <span class="cm"># NEW — visual audit of person clusters</span>
+│   ├── benchmark.py                 <span class="cm"># NEW — threshold calibration tool</span>
+│   └── reset_db.py                  <span class="cm"># fix: TRUNCATE CASCADE</span>
+├── main.py                          <span class="cm"># simplified: 1 face service, 1 identity service</span>
+├── config.yaml
+├── requirements.txt                 <span class="cm"># drop deepface/tf, add insightface/pgvector</span>
+└── README.md
+<span class="cm">
+# Removed entirely:
+#   services/face_detection_service.py
+#   services/simplified_face_service.py
+#   services/embedding_service.py
+#   services/http_face_service.py
+#   services/faiss_vector_store.py
+#   services/faiss_identity_assignment_service.py
+#   services/enhanced_identity_assignment_service.py
+#   services/identity_assignment_service.py  (replaced by identity_service.py)
+#   ai_service/  (entire directory)
+</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <span>ImageManager Rebuild Plan · Generated April 2026</span>
+  <span>Zero-cost · Offline · Open-source only</span>
+</footer>
+
+</body>
+</html>

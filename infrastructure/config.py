@@ -57,16 +57,17 @@ class Config:
                 self.config[section][key] = value
                 logger.debug(f"Overriding config from env: {section}.{key}")
     
-    def get(self, *keys, default=None):
+    def get(self, *keys, default=None, expected_type=None):
         """
-        Get configuration value by nested keys.
+        Get configuration value by nested keys with optional type coercion.
         
         Args:
             *keys: Nested keys to traverse (e.g., 'database', 'host')
             default: Default value if key not found
+            expected_type: Optional type to coerce to (int, float, bool, str)
             
         Returns:
-            Configuration value or default
+            Configuration value (coerced to expected_type if provided) or default
         """
         value = self.config
         for key in keys:
@@ -74,6 +75,26 @@ class Config:
                 value = value[key]
             else:
                 return default
+        
+        # Type coercion
+        if expected_type is not None and value is not None:
+            try:
+                if expected_type == int:
+                    return int(value)
+                elif expected_type == float:
+                    return float(value)
+                elif expected_type == bool:
+                    if isinstance(value, bool):
+                        return value
+                    if isinstance(value, str):
+                        return value.lower() in ('true', '1', 'yes', 'on')
+                    return bool(value)
+                elif expected_type == str:
+                    return str(value)
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to coerce {value} to {expected_type}: {e}, using default")
+                return default
+        
         return value
     
     def get_database_url(self) -> str:

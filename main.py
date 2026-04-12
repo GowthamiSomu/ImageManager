@@ -28,16 +28,12 @@ from infrastructure.database.repositories import (
     PersonRepository, ClusterRepository, FaceRepository, ImageRepository
 )
 
-from services.simplified_face_service import SimplifiedFaceService
+from services.insight_face_service import InsightFaceService
 from services.http_face_service import HttpFaceService
-from services.clustering_service import ClusteringService
-from services.identity_assignment_service import IdentityAssignmentService
-from services.enhanced_identity_assignment_service import EnhancedIdentityAssignmentService
-from services.faiss_identity_assignment_service import FAISSIdentityAssignmentService
-from services.faiss_vector_store import FAISSVectorStore, build_index_from_database
-from services.auto_merge_service import detect_and_merge_duplicates
+from services.identity_service import IdentityService
 from services.person_service import PersonService
 from services.folder_organizer_service import FolderOrganizerService
+from services.auto_merge_service import detect_and_merge_duplicates
 
 logger = logging.getLogger(__name__)
 
@@ -55,82 +51,25 @@ class ImageManagerApp:
         self.db.initialize()
         
         # Initialize services
-        # Stage 5: Use remote AI service if configured
-        use_remote_ai = config.get('ai_service', 'use_remote', default=False)
+        # Primary: Use InsightFace for fast, unified face detection + embedding
+        logger.info("Using InsightFace (buffalo_l) for face detection and embedding")
+        use_gpu = config.get('models', 'use_gpu', default=False, expected_type=bool)
+        self.face_service = InsightFaceService(use_gpu=use_gpu)
         
+        # Fallback: Stage 5 option for remote AI service (if needed for special cases)
+        use_remote_ai = config.get('ai_service', 'use_remote', default=False, expected_type=bool)
         if use_remote_ai:
             ai_service_url = config.get('ai_service', 'url', default='http://localhost:8000')
-            logger.info(f"Using remote AI service at {ai_service_url} (Stage 5)")
+            logger.warning(f"OVERRIDE: Using remote AI service at {ai_service_url} (Stage 5)")
             self.face_service = HttpFaceService(service_url=ai_service_url)
-        else:
-            logger.info("Using local face detection (DeepFace)")
-            self.face_service = SimplifiedFaceService(
-                detector_backend=config.get('models', 'detector_backend', default='retinaface'),
-                model_name=config.get('models', 'model_name', default='ArcFace')
-            )
         
-        self.clustering_service = ClusteringService(
-            similarity_threshold=config.get('clustering', 'similarity_threshold', default=0.70),
-            min_samples=config.get('clustering', 'dbscan_min_samples', default=1)
+        # Use consolidated IdentityService with pgvector ANN search
+        logger.info("Using consolidated IdentityService with pgvector")
+        self.identity_assignment_service = IdentityService(
+            similarity_threshold=config.get('clustering', 'similarity_threshold', default=0.50, expected_type=float),
+            use_quality_weighting=True,
+            max_comparison_embeddings=config.get('identity', 'max_comparison_embeddings', default=5, expected_type=int)
         )
-        
-        # Stage 6: Use FAISS for fast similarity search if enabled
-        use_faiss = config.get('faiss', 'enabled', default=False)
-        
-        if use_faiss:
-            logger.info("Using FAISS for fast similarity search (Stage 6)")
-            
-            # Initialize or load FAISS index
-            index_path = config.get('faiss', 'index_path', default='data/faiss.index')
-            vector_store = FAISSVectorStore(
-                embedding_dim=512,  # ArcFace dimension
-                index_type=config.get('faiss', 'index_type', default='IVFFlat'),
-                nlist=config.get('faiss', 'nlist', default=100),
-                use_gpu=config.get('faiss', 'use_gpu', default=False)
-            )
-            
-            # Try to load existing index
-            try:
-                from pathlib import Path
-                if Path(index_path).with_suffix('.index').exists():
-                    vector_store.load(index_path)
-                    logger.info(f"Loaded FAISS index from {index_path}")
-                else:
-                    # Build from database
-                    with self.db.session_scope() as session:
-                        face_repo = FaceRepository(session)
-                        vector_store = build_index_from_database(session, face_repo)
-                    logger.info("Built FAISS index from database")
-            except Exception as e:
-                logger.warning(f"Could not load FAISS index: {e}, starting fresh")
-            
-            self.identity_assignment_service = FAISSIdentityAssignmentService(
-                embedding_service=self.face_service,
-                clustering_service=self.clustering_service,
-                vector_store=vector_store,
-                similarity_threshold=config.get('clustering', 'similarity_threshold', default=0.50),
-                search_k=config.get('faiss', 'search_k', default=10)
-            )
-            
-            # Save index path for later
-            self.faiss_index_path = index_path
-            
-        # Stage 4: Use enhanced identity assignment if enabled (and not using FAISS)
-        elif config.get('identity', 'use_enhanced_matching', default=False):
-            logger.info("Using EnhancedIdentityAssignmentService (Stage 4 - Multiple Embeddings)")
-            self.identity_assignment_service = EnhancedIdentityAssignmentService(
-                embedding_service=self.face_service,
-                clustering_service=self.clustering_service,
-                similarity_threshold=config.get('clustering', 'similarity_threshold', default=0.50),
-                max_comparison_embeddings=config.get('identity', 'max_comparison_embeddings', default=5)
-            )
-        else:
-            logger.info("Using standard IdentityAssignmentService (Stage 1)")
-            self.identity_assignment_service = IdentityAssignmentService(
-                embedding_service=self.face_service,
-                clustering_service=self.clustering_service,
-                similarity_threshold=config.get('clustering', 'similarity_threshold', default=0.50)
-            )
         
         self.person_service = PersonService(
             person_id_format=config.get('organization', 'person_id_format', default='{:03d}')

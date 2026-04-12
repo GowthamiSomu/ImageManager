@@ -156,6 +156,25 @@ class EmbeddingService:
         
         return float(similarity)
     
+    def cosine_similarity(
+        self,
+        embedding1: np.ndarray,
+        embedding2: np.ndarray
+    ) -> float:
+        """
+        Alias for calculate_similarity() for API consistency.
+        
+        Calculate cosine similarity between two embeddings.
+        
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+            
+        Returns:
+            Cosine similarity score (0 to 1)
+        """
+        return self.calculate_similarity(embedding1, embedding2)
+    
     def find_similar_embeddings(
         self,
         query_embedding: np.ndarray,

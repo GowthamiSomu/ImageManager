@@ -1,12 +1,14 @@
-# Core AI/ML Libraries
-deepface==0.0.92
+# AI / Vision — InsightFace replaces DeepFace + TensorFlow
+insightface==0.7.3
+onnxruntime==1.19.2          # CPU; swap to onnxruntime-gpu for CUDA
 opencv-python==4.10.0.84
 numpy==1.26.4
 scikit-learn==1.5.2
 
-# Database
+# Database — pgvector replaces pickle serialization
 psycopg2-binary==2.9.10
 sqlalchemy==2.0.35
+pgvector==0.3.5              # pgvector SQLAlchemy type integration
 
 # Configuration
 pyyaml==6.0.2
@@ -17,3 +19,6 @@ tqdm==4.66.5
 
 # Logging
 python-json-logger==2.0.7
+
+# Removed: deepface, tensorflow, keras (replaced by insightface)
+# Removed: faiss-cpu (pgvector replaces it)

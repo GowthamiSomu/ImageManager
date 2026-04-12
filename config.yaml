@@ -15,8 +15,9 @@ database:
 
 # AI Model Configuration
 models:
-  detector_backend: "retinaface"  # Face detection model
-  model_name: "ArcFace"           # Face recognition/embedding model
+  use_gpu: false              # Use GPU for inference (requires CUDA setup)
+  detector_backend: "retinaface"  # Kept for backward compatibility (InsightFace now used)
+  model_name: "ArcFace"           # Kept for backward compatibility (buffalo_l used)
   
 # AI Service Configuration (Stage 5)
 ai_service:
@@ -25,8 +26,8 @@ ai_service:
   
 # Clustering Parameters
 clustering:
-  similarity_threshold: 0.50  # Cosine similarity for same person (lowered to accommodate pose/lighting variation)
-  min_face_quality: 0.5       # Minimum quality score to include face
+  similarity_threshold: 0.50  # Cosine similarity for same person (InsightFace ArcFace R100)
+  min_face_quality: 0.40      # Minimum quality score to include face (lowered for side profiles)
   dbscan_eps: 0.15            # DBSCAN epsilon (1 - similarity_threshold)
   dbscan_min_samples: 1       # Minimum samples to form cluster
   
@@ -56,7 +57,7 @@ organization:
 processing:
   batch_size: 10              # Images to process before committing to DB
   skip_existing: true         # Skip already processed images
-  auto_merge_duplicates: true  # Automatically detect and merge duplicates before organizing
+  auto_merge_duplicates: false  # DISABLED by default - use scripts/auto_merge.py instead for safety
   auto_merge_threshold: 0.80   # Minimum similarity for auto-merge (high confidence only)
   auto_merge_min_match_ratio: 0.5  # Minimum ratio of matching embeddings required
   
