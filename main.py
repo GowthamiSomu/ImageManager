@@ -3,12 +3,17 @@ Main orchestration script for ImageManager - Face-Based Photo Sorting System.
 
 This script coordinates the entire pipeline:
 1. Load configuration
-2. Scan images
+2. Scan images (or download from Google Photos)
 3. Detect faces
 4. Generate embeddings
 5. Cluster faces (identify people)
 6. Store in database
 7. Organize images into folders
+
+Usage:
+    python main.py                           # Process images in default input directory
+    python main.py --sync-google-photos      # Download from Google Photos first, then process
+    python main.py --sync-google-photos --max-photos 100  # Download max 100 photos from Google Photos
 """
 import sys
 from pathlib import Path
@@ -18,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import logging
 import time
+import argparse
 from typing import List, Dict
 import numpy as np
 
@@ -335,6 +341,49 @@ class ImageManagerApp:
 
 def main():
     """Main entry point."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='ImageManager - Face-Based Photo Sorting System',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    python main.py                                    # Process existing images
+    python main.py --sync-google-photos               # Download from Google Photos, then process
+    python main.py --sync-google-photos --max-photos 100  # Download max 100 photos from Google Photos
+        """
+    )
+    parser.add_argument(
+        '--sync-google-photos',
+        action='store_true',
+        help='Download photos from Google Photos before processing'
+    )
+    parser.add_argument(
+        '--max-photos',
+        type=int,
+        default=None,
+        help='Maximum number of photos to download from Google Photos (default: all)'
+    )
+    parser.add_argument(
+        '--creds-file',
+        type=str,
+        default='google_credentials.json',
+        help='Path to Google OAuth2 credentials JSON (default: google_credentials.json)'
+    )
+    parser.add_argument(
+        '--client-id',
+        type=str,
+        default=None,
+        help='Google OAuth2 Client ID (alternative to credentials file)'
+    )
+    parser.add_argument(
+        '--client-secret',
+        type=str,
+        default=None,
+        help='Google OAuth2 Client Secret (alternative to credentials file)'
+    )
+    
+    args = parser.parse_args()
+    
     # Load configuration
     config = Config()
     
@@ -344,8 +393,68 @@ def main():
         log_file=config.get('logging', 'log_file')
     )
     
+    logger.info("ImageManager Starting...")
+    
     # Ensure directories exist
     config.ensure_directories()
+    
+    # Sync from Google Photos if requested
+    if args.sync_google_photos:
+        logger.info("=" * 60)
+        logger.info("Syncing photos from Google Photos...")
+        logger.info("=" * 60)
+        
+        try:
+            import os
+            from services.google_photos_service import GooglePhotosService
+            
+            output_dir = config.get_input_directory()
+            logger.info(f"Download destination: {output_dir}")
+            
+            # Determine credentials to use
+            creds_file = args.creds_file if args.creds_file != 'google_credentials.json' or Path(args.creds_file).exists() else None
+            client_id = args.client_id or os.environ.get('GOOGLE_CLIENT_ID')
+            client_secret = args.client_secret or os.environ.get('GOOGLE_CLIENT_SECRET')
+            
+            # Verify we have credentials
+            if not creds_file and not (client_id and client_secret):
+                logger.error("No Google credentials provided!")
+                logger.error("Use --client-id and --client-secret, or --creds-file")
+                logger.error("Or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables")
+                sys.exit(1)
+            
+            service = GooglePhotosService(
+                credentials_file=creds_file,
+                client_id=client_id,
+                client_secret=client_secret,
+                token_file='.google_photos_token.json',
+                output_dir=str(output_dir)
+            )
+            
+            # Get order_by setting from config or use default
+            order_by = config.get('google_photos', 'order_by', default='creationTime')
+            
+            stats = service.download_all_photos(
+                max_photos=args.max_photos,
+                preserve_metadata=True,
+                order_by=order_by
+            )
+            
+            logger.info(f"Downloaded {stats['successful']} photos from Google Photos")
+            
+            if stats['failed'] > 0:
+                logger.warning(f"Failed to download {stats['failed']} photos")
+            
+        except ImportError:
+            logger.error("Google Photos integration not available. Install dependencies: pip install -r requirements.txt")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(f"Failed to sync from Google Photos: {e}", exc_info=True)
+            sys.exit(1)
+    
+    logger.info("=" * 60)
+    logger.info("Starting image processing...")
+    logger.info("=" * 60)
     
     # Create and run application
     app = ImageManagerApp(config)

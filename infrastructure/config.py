@@ -36,8 +36,36 @@ class Config:
         
         logger.info(f"Configuration loaded from {config_path}")
         
+        # Substitute environment variables in config values
+        self._substitute_env_vars()
+        
         # Override with environment variables if present
         self._apply_env_overrides()
+    
+    def _substitute_env_vars(self):
+        """Replace ${VAR} patterns with environment variable values."""
+        def substitute_dict(d):
+            if not isinstance(d, dict):
+                return d
+            
+            for key, value in d.items():
+                if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                    # Extract variable name: ${VAR} -> VAR
+                    var_name = value[2:-1]
+                    env_value = os.getenv(var_name)
+                    if env_value is not None:
+                        d[key] = env_value
+                        logger.debug(f"Substituted '{var_name}' in config: {key}")
+                    else:
+                        logger.warning(f"Environment variable not found: {var_name}")
+                elif isinstance(value, dict):
+                    substitute_dict(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            substitute_dict(item)
+        
+        substitute_dict(self.config)
     
     def _apply_env_overrides(self):
         """Override config values with environment variables."""
@@ -47,6 +75,8 @@ class Config:
             'DB_NAME': ('database', 'name'),
             'DB_USER': ('database', 'user'),
             'DB_PASSWORD': ('database', 'password'),
+            'GOOGLE_CLIENT_ID': ('google_photos', 'client_id'),
+            'GOOGLE_CLIENT_SECRET': ('google_photos', 'client_secret'),
         }
         
         for env_var, (section, key) in env_mappings.items():

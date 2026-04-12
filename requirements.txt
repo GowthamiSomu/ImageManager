@@ -1,6 +1,6 @@
 # AI / Vision — InsightFace replaces DeepFace + TensorFlow
 insightface==0.7.3
-onnxruntime==1.19.2          # CPU; swap to onnxruntime-gpu for CUDA
+onnxruntime>=1.19.2          # CPU; swap to onnxruntime-gpu for CUDA
 opencv-python==4.10.0.84
 numpy==1.26.4
 scikit-learn==1.5.2
@@ -19,6 +19,16 @@ tqdm==4.66.5
 
 # Logging
 python-json-logger==2.0.7
+
+# Google Photos Integration
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.107.0
+requests==2.32.3
+
+# Web UI
+flask==3.0.0                 # REST API server for web dashboard
+flask-cors==4.0.0            # CORS support for web UI requests
 
 # Removed: deepface, tensorflow, keras (replaced by insightface)
 # Removed: faiss-cpu (pgvector replaces it)

@@ -13,6 +13,17 @@ database:
   user: "postgres"
   password: "postgres"  # Change this in production or use environment variable
 
+# Google Photos Integration
+google_photos:
+  enabled: true
+  client_id: "${GOOGLE_CLIENT_ID}"          # Use environment variable GOOGLE_CLIENT_ID
+  client_secret: "${GOOGLE_CLIENT_SECRET}"  # Use environment variable GOOGLE_CLIENT_SECRET
+  output_dir: "D:\\Photos"             # Where to download photos
+  max_photos: null                     # null = download all, or set a number like 100
+  order_by: "creationTime"             # Order photos: "creationTime" (oldest first) or "relevance"
+  preserve_metadata: true              # Save photo metadata as JSON files
+  skip_existing: true                  # Skip already downloaded files
+
 # AI Model Configuration
 models:
   use_gpu: false              # Use GPU for inference (requires CUDA setup)
@@ -65,3 +76,10 @@ processing:
 logging:
   level: "INFO"               # DEBUG, INFO, WARNING, ERROR
   log_file: "imagemanager.log"
+
+# Web UI Configuration
+ui:
+  host: "0.0.0.0"             # Listen on all interfaces (change to 127.0.0.1 for localhost only)
+  port: 5050                  # Web UI API port
+  # Run: python ui/server.py
+  # Then open ui/index.html in your browser
