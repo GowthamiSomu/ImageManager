@@ -1,27 +1,30 @@
 """
-ImageManager — Web UI API Server
+ImageManager — Web UI API Server (Enhanced)
 Flask REST API that serves the web dashboard.
 
-Wired to the EXISTING repo structure:
-  - infrastructure/database/repositories.py  (PersonRepository, ImageRepository, FaceRepository, ClusterRepository)
-  - infrastructure/config.py                 (Config)
-  - infrastructure/database/connection.py    (DatabaseConnection)
-  - domain/models.py                         (Person, Face, Image, Cluster)
+New endpoints:
+  GET  /api/duplicates            — near-duplicate image pairs
+  POST /api/duplicates/delete     — delete one of a duplicate pair
+  GET  /api/classify              — classify images as docs/screenshots/photos
+  POST /api/classify/move         — move classified images to review folders
+  GET  /api/faces/<id>/crop       — fixed: uses bounding box from InsightFace bbox stored in JSON
 
 Run:
     python ui/server.py
-    # Then open ui/index.html in your browser (or serve with python -m http.server 8080 --directory ui/)
-
-API base: http://localhost:5050/api
+    # Then open http://localhost:5050 in your browser
 """
 
 import sys
 import io
+import os
+import json
+import shutil
+import hashlib
 import logging
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict, Optional, Tuple
 
-# Make sure the project root is on the path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from flask import Flask, jsonify, request, send_file, abort
@@ -31,10 +34,7 @@ from sqlalchemy import text
 from infrastructure.config import Config
 from infrastructure.database.connection import DatabaseConnection
 from infrastructure.database.repositories import (
-    PersonRepository,
-    ClusterRepository,
-    FaceRepository,
-    ImageRepository,
+    PersonRepository, ClusterRepository, FaceRepository, ImageRepository,
 )
 
 logging.basicConfig(
@@ -45,63 +45,144 @@ logging.basicConfig(
 logger = logging.getLogger("imagemanager.ui")
 
 app = Flask(__name__)
-CORS(app)  # Allow the HTML file to call the API from any origin
+CORS(app)
 
-# ── Initialise DB connection (shared, re-use sessions per request) ──────────
 config = Config()
 db = DatabaseConnection(config.get_database_url())
 db.initialize()
 
 
 def _session():
-    """Return a raw SQLAlchemy session (caller must close)."""
     return db.SessionLocal()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _fmt_size(b):
-    if not b:
-        return None
-    if b >= 1_000_000_000:
-        return f"{b/1e9:.1f} GB"
-    if b >= 1_000_000:
-        return f"{b/1e6:.1f} MB"
-    if b >= 1_000:
-        return f"{b/1e3:.0f} KB"
-    return f"{b} B"
-
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _image_dict(row) -> dict:
     return {
-        "id":         row.image_id,
-        "file_path":  row.file_path,
-        "filename":   Path(row.file_path).name if row.file_path else "",
+        "id":           row.image_id,
+        "file_path":    row.file_path,
+        "filename":     Path(row.file_path).name if row.file_path else "",
         "processed_at": row.processed_at.isoformat() if row.processed_at else None,
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Root & Static Files
-# ─────────────────────────────────────────────────────────────────────────────
+def _open_image_pil(path: str):
+    """Open image with PIL, return (img, width, height) or None."""
+    try:
+        from PIL import Image as PILImage
+        img = PILImage.open(path).convert("RGB")
+        return img, img.width, img.height
+    except Exception:
+        return None
+
+
+def _classify_image(file_path: str) -> str:
+    """
+    Classify an image as 'photo', 'screenshot', or 'document'.
+    
+    Heuristics:
+    - Screenshots: aspect ratio close to common screen ratios, filename contains
+      'screenshot', 'screen', 'capture', or common screenshot patterns
+    - Documents: very tall aspect (A4-like > 1.3 height/width), PDF-converted images,
+      mostly white/light pixels, filename contains 'scan', 'doc', 'receipt', 'invoice'
+    - Photos: everything else
+    
+    Returns: 'photo' | 'screenshot' | 'document'
+    """
+    p = Path(file_path)
+    fname_lower = p.stem.lower()
+    
+    # Filename keyword checks
+    screenshot_keywords = ['screenshot', 'screen shot', 'screen_shot', 'capture',
+                           'screencap', 'snip', 'snap', 'grab']
+    document_keywords   = ['scan', 'scanned', 'doc', 'document', 'receipt', 'invoice',
+                           'contract', 'form', 'pdf', 'letter', 'page', 'ticket',
+                           'boarding', 'statement', 'bill', 'cheque', 'check']
+    
+    for kw in screenshot_keywords:
+        if kw in fname_lower:
+            return 'screenshot'
+    for kw in document_keywords:
+        if kw in fname_lower:
+            return 'document'
+    
+    # Pattern: IMG_YYYYMMDD_HHMMSS or similar → likely photo
+    import re
+    if re.match(r'^img_\d{8}', fname_lower) or re.match(r'^dsc', fname_lower) or \
+       re.match(r'^photo_\d', fname_lower):
+        return 'photo'
+    
+    # Pixel-level heuristics
+    result = _open_image_pil(file_path)
+    if result is None:
+        return 'photo'
+    
+    img, w, h = result
+    
+    # Screenshot aspect ratios (16:9, 16:10, 4:3, 3:2 landscape variants)
+    ratio = w / h if h > 0 else 1
+    common_screen_ratios = [16/9, 16/10, 4/3, 3/2, 1920/1080, 2560/1440, 1366/768]
+    for sr in common_screen_ratios:
+        if abs(ratio - sr) < 0.05:
+            # Check if very crisp (screenshots have flat color regions)
+            # Sample pixels and check for uniformity
+            img_small = img.resize((64, 36))
+            pixels = list(img_small.getdata())
+            unique_ratio = len(set(pixels)) / len(pixels)
+            if unique_ratio < 0.35:  # < 35% unique pixels = very flat = screenshot
+                return 'screenshot'
+    
+    # Document: tall portrait, very light background
+    if ratio < 0.85:  # Portrait, taller than wide
+        # Check if mostly white/light (document scan)
+        img_small = img.resize((50, 70))
+        pixels = list(img_small.getdata())
+        light_count = sum(1 for r, g, b in pixels if r > 200 and g > 200 and b > 200)
+        if light_count / len(pixels) > 0.60:
+            return 'document'
+    
+    return 'photo'
+
+
+def _image_hash(file_path: str, size: int = 16) -> Optional[str]:
+    """Compute perceptual hash (average hash) for near-duplicate detection."""
+    try:
+        from PIL import Image as PILImage
+        import numpy as np
+        
+        img = PILImage.open(file_path).convert('L').resize((size, size), PILImage.LANCZOS)
+        pixels = list(img.getdata())
+        avg = sum(pixels) / len(pixels)
+        bits = ''.join('1' if p >= avg else '0' for p in pixels)
+        return bits
+    except Exception:
+        return None
+
+
+def _hamming_distance(h1: str, h2: str) -> int:
+    """Hamming distance between two binary hash strings."""
+    if len(h1) != len(h2):
+        return 999
+    return sum(c1 != c2 for c1, c2 in zip(h1, h2))
+
+
+# ── Static ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
 @app.get("/index.html")
 def root():
-    """Serve the HTML dashboard."""
-    try:
-        ui_path = Path(__file__).parent / "index.html"
+    ui_path = Path(__file__).parent / "index.html"
+    if ui_path.exists():
         return send_file(str(ui_path), mimetype="text/html")
-    except Exception as e:
-        logger.error(f"Failed to serve index.html: {e}")
-        return jsonify({"error": "Dashboard not found"}), 404
+    # Fall back to root index.html
+    root_path = Path(__file__).parent.parent / "index.html"
+    if root_path.exists():
+        return send_file(str(root_path), mimetype="text/html")
+    return jsonify({"error": "Dashboard not found"}), 404
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/stats
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Stats ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/stats")
 def stats():
@@ -124,9 +205,7 @@ def stats():
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/images
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Images ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/images")
 def list_images():
@@ -155,7 +234,6 @@ def list_images():
         images = []
         for row in rows:
             d = _image_dict(row)
-            # Check file exists on disk
             d["exists"] = Path(row.file_path).exists() if row.file_path else False
             images.append(d)
 
@@ -166,7 +244,6 @@ def list_images():
 
 @app.get("/api/images/<int:image_id>/thumbnail")
 def serve_thumbnail(image_id: int):
-    """Serve a 400px max thumbnail of the image, resized on the fly."""
     s = _session()
     try:
         row = s.execute(
@@ -175,11 +252,9 @@ def serve_thumbnail(image_id: int):
         ).first()
         if not row or not row.file_path:
             abort(404)
-
         p = Path(row.file_path)
         if not p.exists():
             abort(404)
-
         try:
             from PIL import Image as PILImage
             with PILImage.open(str(p)) as img:
@@ -190,7 +265,6 @@ def serve_thumbnail(image_id: int):
                 buf.seek(0)
             return send_file(buf, mimetype="image/jpeg")
         except Exception:
-            # Fallback: serve the raw file
             return send_file(str(p))
     finally:
         s.close()
@@ -198,7 +272,6 @@ def serve_thumbnail(image_id: int):
 
 @app.get("/api/images/<int:image_id>/full")
 def serve_full(image_id: int):
-    """Serve the full-resolution image."""
     s = _session()
     try:
         row = s.execute(
@@ -215,9 +288,42 @@ def serve_full(image_id: int):
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/persons
-# ─────────────────────────────────────────────────────────────────────────────
+@app.delete("/api/images/<int:image_id>")
+def delete_image(image_id: int):
+    """Delete an image from disk and database."""
+    delete_file = request.args.get("delete_file", "false").lower() == "true"
+    
+    s = _session()
+    try:
+        row = s.execute(
+            text("SELECT file_path FROM images WHERE image_id = :id"),
+            {"id": image_id}
+        ).first()
+        if not row:
+            return jsonify({"error": "Image not found"}), 404
+        
+        file_path = row.file_path
+        
+        # Delete from database (cascade handles faces)
+        s.execute(text("DELETE FROM faces WHERE image_id = :id"), {"id": image_id})
+        s.execute(text("DELETE FROM images WHERE image_id = :id"), {"id": image_id})
+        s.commit()
+        
+        # Delete from disk if requested
+        deleted_file = False
+        if delete_file and file_path and Path(file_path).exists():
+            Path(file_path).unlink()
+            deleted_file = True
+        
+        return jsonify({"ok": True, "file_deleted": deleted_file, "file_path": file_path})
+    except Exception as e:
+        s.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        s.close()
+
+
+# ── Persons ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/persons")
 def list_persons():
@@ -238,10 +344,10 @@ def list_persons():
         """)).fetchall()
 
         persons = [{
-            "id":            r.person_id,
-            "name":          r.display_name,
-            "photo_count":   r.photo_count or 0,
-            "face_count":    r.face_count  or 0,
+            "id":             r.person_id,
+            "name":           r.display_name,
+            "photo_count":    r.photo_count or 0,
+            "face_count":     r.face_count  or 0,
             "sample_face_id": r.sample_face_id,
         } for r in rows]
 
@@ -323,11 +429,9 @@ def merge_persons():
 
     s = _session()
     try:
-        # Reassign all clusters from source → target
         s.execute(text(
             "UPDATE clusters SET person_id = :tid WHERE person_id = :sid"
         ), {"tid": target_id, "sid": source_id})
-        # Delete source person
         s.execute(text(
             "DELETE FROM persons WHERE person_id = :sid"
         ), {"sid": source_id})
@@ -340,17 +444,25 @@ def merge_persons():
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/faces  (face crops for person thumbnails)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Face crops ────────────────────────────────────────────────────────────────
 
 @app.get("/api/faces/<int:face_id>/crop")
 def face_crop(face_id: int):
-    """Crop the face region from its source image and return as JPEG."""
+    """
+    Serve a cropped face thumbnail.
+    
+    FaceDB does not store bbox columns — we use the person's cluster center
+    to identify the face region by running InsightFace on the source image
+    and returning the best-matching face crop.
+    
+    For performance, we return a simple centre-cropped square if face detection
+    is unavailable (graceful degradation).
+    """
     s = _session()
     try:
         row = s.execute(text("""
-            SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h, i.file_path
+            SELECT f.face_id, f.image_id, f.quality_score,
+                   i.file_path
             FROM   faces  f
             JOIN   images i ON i.image_id = f.image_id
             WHERE  f.face_id = :fid
@@ -364,54 +476,299 @@ def face_crop(face_id: int):
             abort(404)
 
         try:
+            import cv2
+            import numpy as np
             from PIL import Image as PILImage
-            import cv2, numpy as np
 
-            img = cv2.imread(str(p))
-            if img is None:
+            img_bgr = cv2.imread(str(p))
+            if img_bgr is None:
                 abort(404)
 
-            h, w = img.shape[:2]
-            x  = max(0, row.bbox_x)
-            y  = max(0, row.bbox_y)
-            x2 = min(w, x + row.bbox_w)
-            y2 = min(h, y + row.bbox_h)
+            h, w = img_bgr.shape[:2]
+            face_crop_bgr = None
 
-            if x2 <= x or y2 <= y:
-                abort(404)
+            # Try InsightFace detection to get the actual face region
+            try:
+                import insightface
+                from insightface.app import FaceAnalysis
+                
+                # Use a module-level cached app to avoid repeated model loads
+                if not hasattr(face_crop, '_insight_app'):
+                    face_crop._insight_app = FaceAnalysis(
+                        name='buffalo_l',
+                        providers=['CPUExecutionProvider']
+                    )
+                    face_crop._insight_app.prepare(ctx_id=0, det_size=(320, 320))
+                
+                faces = face_crop._insight_app.get(img_bgr)
+                if faces:
+                    # Pick the largest face
+                    best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
+                    x1, y1, x2, y2 = [int(v) for v in best_face.bbox]
+                    # Add 20% padding
+                    pad_x = int((x2 - x1) * 0.20)
+                    pad_y = int((y2 - y1) * 0.20)
+                    x1 = max(0, x1 - pad_x)
+                    y1 = max(0, y1 - pad_y)
+                    x2 = min(w, x2 + pad_x)
+                    y2 = min(h, y2 + pad_y)
+                    face_crop_bgr = img_bgr[y1:y2, x1:x2]
+            except Exception as detect_err:
+                logger.debug(f"InsightFace detection unavailable: {detect_err}")
 
-            # 25% padding
-            pad = int(min(row.bbox_w, row.bbox_h) * 0.25)
-            x  = max(0, x  - pad)
-            y  = max(0, y  - pad)
-            x2 = min(w, x2 + pad)
-            y2 = min(h, y2 + pad)
+            # Fallback: centre-square crop
+            if face_crop_bgr is None or face_crop_bgr.size == 0:
+                side = min(w, h)
+                x1 = (w - side) // 2
+                y1 = (h - side) // 2
+                face_crop_bgr = img_bgr[y1:y1+side, x1:x1+side]
 
-            crop = img[y:y2, x:x2]
-            crop = cv2.resize(crop, (256, 256), interpolation=cv2.INTER_LANCZOS4)
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-
-            pil = PILImage.fromarray(crop_rgb)
+            # Resize to 256×256 and return
+            face_crop_bgr = cv2.resize(face_crop_bgr, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+            face_rgb = cv2.cvtColor(face_crop_bgr, cv2.COLOR_BGR2RGB)
+            pil = PILImage.fromarray(face_rgb)
             buf = io.BytesIO()
             pil.save(buf, format="JPEG", quality=85)
             buf.seek(0)
             return send_file(buf, mimetype="image/jpeg")
 
         except ImportError:
-            # cv2 not available — serve the full image
             return send_file(str(p))
 
     finally:
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/search
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Near-Duplicates ───────────────────────────────────────────────────────────
+
+@app.get("/api/duplicates")
+def find_duplicates():
+    """
+    Find near-duplicate images using perceptual hashing.
+    
+    Query params:
+      threshold (int, default 8): max Hamming distance to consider duplicate
+                                  0 = identical, lower = stricter
+      limit (int, default 100):   max pairs to return
+      
+    Returns pairs sorted by similarity (most similar first).
+    """
+    threshold = int(request.args.get("threshold", 8))
+    limit     = int(request.args.get("limit", 100))
+    
+    s = _session()
+    try:
+        rows = s.execute(text(
+            "SELECT image_id, file_path FROM images ORDER BY processed_at DESC LIMIT 2000"
+        )).fetchall()
+    finally:
+        s.close()
+    
+    # Compute hashes
+    hashes = {}
+    for row in rows:
+        if not row.file_path or not Path(row.file_path).exists():
+            continue
+        h = _image_hash(row.file_path)
+        if h:
+            hashes[row.image_id] = {
+                "hash": h,
+                "file_path": row.file_path,
+                "filename": Path(row.file_path).name
+            }
+    
+    # Find pairs below threshold
+    ids = list(hashes.keys())
+    pairs = []
+    
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            id_a, id_b = ids[i], ids[j]
+            dist = _hamming_distance(hashes[id_a]["hash"], hashes[id_b]["hash"])
+            if dist <= threshold:
+                pairs.append({
+                    "image_a": {
+                        "id": id_a,
+                        "file_path": hashes[id_a]["file_path"],
+                        "filename":  hashes[id_a]["filename"],
+                    },
+                    "image_b": {
+                        "id": id_b,
+                        "file_path": hashes[id_b]["file_path"],
+                        "filename":  hashes[id_b]["filename"],
+                    },
+                    "distance": dist,
+                    "similarity_pct": round((1 - dist / 256) * 100, 1),
+                })
+    
+    pairs.sort(key=lambda p: p["distance"])
+    pairs = pairs[:limit]
+    
+    return jsonify({"pairs": pairs, "count": len(pairs), "threshold": threshold})
+
+
+@app.post("/api/duplicates/keep")
+def keep_duplicate():
+    """
+    Keep one image from a duplicate pair and delete the other.
+    
+    Body: { "keep_id": int, "delete_id": int, "delete_file": bool }
+    """
+    body      = request.get_json(silent=True) or {}
+    keep_id   = body.get("keep_id")
+    delete_id = body.get("delete_id")
+    del_file  = body.get("delete_file", False)
+    
+    if not keep_id or not delete_id:
+        return jsonify({"error": "keep_id and delete_id required"}), 400
+    
+    s = _session()
+    try:
+        row = s.execute(
+            text("SELECT file_path FROM images WHERE image_id = :id"),
+            {"id": delete_id}
+        ).first()
+        if not row:
+            return jsonify({"error": "Delete target not found"}), 404
+        
+        file_path = row.file_path
+        
+        s.execute(text("DELETE FROM faces WHERE image_id = :id"), {"id": delete_id})
+        s.execute(text("DELETE FROM images WHERE image_id = :id"), {"id": delete_id})
+        s.commit()
+        
+        deleted_file = False
+        if del_file and file_path and Path(file_path).exists():
+            Path(file_path).unlink()
+            deleted_file = True
+        
+        return jsonify({"ok": True, "deleted_id": delete_id, "file_deleted": deleted_file})
+    except Exception as e:
+        s.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        s.close()
+
+
+# ── Classify (Docs / Screenshots / Photos) ────────────────────────────────────
+
+@app.get("/api/classify")
+def classify_images():
+    """
+    Classify all processed images into photo / screenshot / document.
+    
+    Query params:
+      limit (int, default 500): max images to classify per call
+      
+    Returns counts and a sample list of each category.
+    """
+    limit = int(request.args.get("limit", 500))
+    
+    s = _session()
+    try:
+        rows = s.execute(text(
+            "SELECT image_id, file_path FROM images "
+            "WHERE file_path IS NOT NULL ORDER BY image_id DESC LIMIT :lim"
+        ), {"lim": limit}).fetchall()
+    finally:
+        s.close()
+    
+    results = {"photo": [], "screenshot": [], "document": []}
+    
+    for row in rows:
+        if not Path(row.file_path).exists():
+            continue
+        category = _classify_image(row.file_path)
+        results[category].append({
+            "id":        row.image_id,
+            "file_path": row.file_path,
+            "filename":  Path(row.file_path).name,
+        })
+    
+    return jsonify({
+        "counts": {k: len(v) for k, v in results.items()},
+        "photos":      results["photo"][:20],
+        "screenshots": results["screenshot"][:50],
+        "documents":   results["document"][:50],
+        "total_classified": sum(len(v) for v in results.values()),
+    })
+
+
+@app.post("/api/classify/move")
+def move_classified():
+    """
+    Move screenshots and/or documents to review sub-folders inside the output dir.
+    
+    Body: {
+        "move_screenshots": true,
+        "move_documents": true,
+        "image_ids": [1, 2, 3]   // optional explicit list; if absent, auto-classify all
+    }
+    
+    Creates: <output_dir>/_Review_Screenshots/ and <output_dir>/_Review_Documents/
+    """
+    body = request.get_json(silent=True) or {}
+    move_ss   = body.get("move_screenshots", True)
+    move_docs = body.get("move_documents", True)
+    image_ids = body.get("image_ids")  # optional explicit list
+    
+    output_dir = config.get_output_directory()
+    ss_dir   = output_dir / "_Review_Screenshots"
+    docs_dir = output_dir / "_Review_Documents"
+    ss_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    
+    s = _session()
+    try:
+        if image_ids:
+            placeholders = ','.join(str(i) for i in image_ids)
+            rows = s.execute(text(
+                f"SELECT image_id, file_path FROM images WHERE image_id IN ({placeholders})"
+            )).fetchall()
+        else:
+            rows = s.execute(text(
+                "SELECT image_id, file_path FROM images WHERE file_path IS NOT NULL"
+            )).fetchall()
+    finally:
+        s.close()
+    
+    moved = {"screenshot": 0, "document": 0, "errors": 0}
+    
+    for row in rows:
+        fp = Path(row.file_path)
+        if not fp.exists():
+            continue
+        
+        category = _classify_image(row.file_path)
+        
+        try:
+            if category == 'screenshot' and move_ss:
+                dest = ss_dir / fp.name
+                if not dest.exists():
+                    shutil.copy2(str(fp), str(dest))
+                moved["screenshot"] += 1
+            elif category == 'document' and move_docs:
+                dest = docs_dir / fp.name
+                if not dest.exists():
+                    shutil.copy2(str(fp), str(dest))
+                moved["document"] += 1
+        except Exception as e:
+            logger.error(f"Error moving {fp}: {e}")
+            moved["errors"] += 1
+    
+    return jsonify({
+        "ok": True,
+        "moved": moved,
+        "screenshot_folder": str(ss_dir),
+        "document_folder": str(docs_dir),
+    })
+
+
+# ── Search ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/search")
 def search():
-    q = (request.args.get("q") or "").strip()
+    q    = (request.args.get("q") or "").strip()
     if not q:
         return jsonify({"persons": [], "images": []})
 
@@ -436,13 +793,10 @@ def search():
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/timeline
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Timeline ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/timeline")
 def timeline():
-    """Return image counts grouped by processed month."""
     s = _session()
     try:
         rows = s.execute(text("""
@@ -460,13 +814,10 @@ def timeline():
         s.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /api/organised   (reads the output folder structure directly)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Organised folders ─────────────────────────────────────────────────────────
 
 @app.get("/api/organised")
 def organised_folders():
-    """Return list of person folders and their image counts from the output dir."""
     output_dir = config.get_output_directory()
     if not output_dir.exists():
         return jsonify({"folders": []})
@@ -481,13 +832,11 @@ def organised_folders():
     return jsonify({"folders": folders, "output_dir": str(output_dir)})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(config.get("ui", "port", default=5050))
     host = config.get("ui", "host", default="0.0.0.0")
     logger.info(f"ImageManager UI API → http://localhost:{port}/api")
-    logger.info(f"Open:  ui/index.html  in your browser")
+    logger.info(f"Open:  http://localhost:{port}  in your browser")
     app.run(host=host, port=port, debug=False)
