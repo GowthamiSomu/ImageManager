@@ -48,6 +48,11 @@ Thumbs.db
 Organized/
 *.db
 
+# Google credentials
+service_account_key.json
+google_credentials.json
+.google_photos_token.json
+
 # Documentation (keep only README.md)
 *.md
 !README.md

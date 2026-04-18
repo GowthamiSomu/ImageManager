@@ -2,16 +2,9 @@
 ImageManager — Web UI API Server (Enhanced)
 Flask REST API that serves the web dashboard.
 
-New endpoints:
-  GET  /api/duplicates            — near-duplicate image pairs
-  POST /api/duplicates/delete     — delete one of a duplicate pair
-  GET  /api/classify              — classify images as docs/screenshots/photos
-  POST /api/classify/move         — move classified images to review folders
-  GET  /api/faces/<id>/crop       — fixed: uses bounding box from InsightFace bbox stored in JSON
-
-Run:
-    python ui/server.py
-    # Then open http://localhost:5050 in your browser
+Fix (2026-04-13): face_crop now uses stored bbox_x/y/w/h instead of
+re-detecting faces — this ensures each person thumbnail shows the
+CORRECT face, not just the largest face in the image.
 """
 
 import sys
@@ -68,7 +61,6 @@ def _image_dict(row) -> dict:
 
 
 def _open_image_pil(path: str):
-    """Open image with PIL, return (img, width, height) or None."""
     try:
         from PIL import Image as PILImage
         img = PILImage.open(path).convert("RGB")
@@ -78,90 +70,64 @@ def _open_image_pil(path: str):
 
 
 def _classify_image(file_path: str) -> str:
-    """
-    Classify an image as 'photo', 'screenshot', or 'document'.
-    
-    Heuristics:
-    - Screenshots: aspect ratio close to common screen ratios, filename contains
-      'screenshot', 'screen', 'capture', or common screenshot patterns
-    - Documents: very tall aspect (A4-like > 1.3 height/width), PDF-converted images,
-      mostly white/light pixels, filename contains 'scan', 'doc', 'receipt', 'invoice'
-    - Photos: everything else
-    
-    Returns: 'photo' | 'screenshot' | 'document'
-    """
     p = Path(file_path)
     fname_lower = p.stem.lower()
-    
-    # Filename keyword checks
+
     screenshot_keywords = ['screenshot', 'screen shot', 'screen_shot', 'capture',
                            'screencap', 'snip', 'snap', 'grab']
     document_keywords   = ['scan', 'scanned', 'doc', 'document', 'receipt', 'invoice',
                            'contract', 'form', 'pdf', 'letter', 'page', 'ticket',
                            'boarding', 'statement', 'bill', 'cheque', 'check']
-    
+
     for kw in screenshot_keywords:
         if kw in fname_lower:
             return 'screenshot'
     for kw in document_keywords:
         if kw in fname_lower:
             return 'document'
-    
-    # Pattern: IMG_YYYYMMDD_HHMMSS or similar → likely photo
+
     import re
     if re.match(r'^img_\d{8}', fname_lower) or re.match(r'^dsc', fname_lower) or \
        re.match(r'^photo_\d', fname_lower):
         return 'photo'
-    
-    # Pixel-level heuristics
+
     result = _open_image_pil(file_path)
     if result is None:
         return 'photo'
-    
+
     img, w, h = result
-    
-    # Screenshot aspect ratios (16:9, 16:10, 4:3, 3:2 landscape variants)
     ratio = w / h if h > 0 else 1
     common_screen_ratios = [16/9, 16/10, 4/3, 3/2, 1920/1080, 2560/1440, 1366/768]
     for sr in common_screen_ratios:
         if abs(ratio - sr) < 0.05:
-            # Check if very crisp (screenshots have flat color regions)
-            # Sample pixels and check for uniformity
             img_small = img.resize((64, 36))
             pixels = list(img_small.getdata())
             unique_ratio = len(set(pixels)) / len(pixels)
-            if unique_ratio < 0.35:  # < 35% unique pixels = very flat = screenshot
+            if unique_ratio < 0.35:
                 return 'screenshot'
-    
-    # Document: tall portrait, very light background
-    if ratio < 0.85:  # Portrait, taller than wide
-        # Check if mostly white/light (document scan)
+
+    if ratio < 0.85:
         img_small = img.resize((50, 70))
         pixels = list(img_small.getdata())
         light_count = sum(1 for r, g, b in pixels if r > 200 and g > 200 and b > 200)
         if light_count / len(pixels) > 0.60:
             return 'document'
-    
+
     return 'photo'
 
 
 def _image_hash(file_path: str, size: int = 16) -> Optional[str]:
-    """Compute perceptual hash (average hash) for near-duplicate detection."""
     try:
         from PIL import Image as PILImage
-        import numpy as np
-        
         img = PILImage.open(file_path).convert('L').resize((size, size), PILImage.LANCZOS)
         pixels = list(img.getdata())
         avg = sum(pixels) / len(pixels)
-        bits = ''.join('1' if p >= avg else '0' for p in pixels)
-        return bits
+        return ''.join('1' if p >= avg else '0' for p in pixels)
     except Exception:
         return None
 
 
 def _hamming_distance(h1: str, h2: str) -> int:
-    """Hamming distance between two binary hash strings."""
     if len(h1) != len(h2):
         return 999
     return sum(c1 != c2 for c1, c2 in zip(h1, h2))
@@ -172,13 +138,12 @@ def _hamming_distance(h1: str, h2: str) -> int:
 @app.get("/")
 @app.get("/index.html")
 def root():
-    ui_path = Path(__file__).parent / "index.html"
-    if ui_path.exists():
-        return send_file(str(ui_path), mimetype="text/html")
-    # Fall back to root index.html
-    root_path = Path(__file__).parent.parent / "index.html"
-    if root_path.exists():
-        return send_file(str(root_path), mimetype="text/html")
+    for candidate in [
+        Path(__file__).parent / "index.html",
+        Path(__file__).parent.parent / "index.html",
+    ]:
+        if candidate.exists():
+            return send_file(str(candidate), mimetype="text/html")
     return jsonify({"error": "Dashboard not found"}), 404
 
 
@@ -247,8 +212,7 @@ def serve_thumbnail(image_id: int):
     s = _session()
     try:
         row = s.execute(
-            text("SELECT file_path FROM images WHERE image_id = :id"),
-            {"id": image_id}
+            text("SELECT file_path FROM images WHERE image_id = :id"), {"id": image_id}
         ).first()
         if not row or not row.file_path:
             abort(404)
@@ -275,8 +239,7 @@ def serve_full(image_id: int):
     s = _session()
     try:
         row = s.execute(
-            text("SELECT file_path FROM images WHERE image_id = :id"),
-            {"id": image_id}
+            text("SELECT file_path FROM images WHERE image_id = :id"), {"id": image_id}
         ).first()
         if not row or not row.file_path:
             abort(404)
@@ -290,32 +253,26 @@ def serve_full(image_id: int):
 
 @app.delete("/api/images/<int:image_id>")
 def delete_image(image_id: int):
-    """Delete an image from disk and database."""
     delete_file = request.args.get("delete_file", "false").lower() == "true"
-    
     s = _session()
     try:
         row = s.execute(
-            text("SELECT file_path FROM images WHERE image_id = :id"),
-            {"id": image_id}
+            text("SELECT file_path FROM images WHERE image_id = :id"), {"id": image_id}
         ).first()
         if not row:
             return jsonify({"error": "Image not found"}), 404
-        
+
         file_path = row.file_path
-        
-        # Delete from database (cascade handles faces)
-        s.execute(text("DELETE FROM faces WHERE image_id = :id"), {"id": image_id})
+        s.execute(text("DELETE FROM faces  WHERE image_id = :id"), {"id": image_id})
         s.execute(text("DELETE FROM images WHERE image_id = :id"), {"id": image_id})
         s.commit()
-        
-        # Delete from disk if requested
+
         deleted_file = False
         if delete_file and file_path and Path(file_path).exists():
             Path(file_path).unlink()
             deleted_file = True
-        
-        return jsonify({"ok": True, "file_deleted": deleted_file, "file_path": file_path})
+
+        return jsonify({"ok": True, "file_deleted": deleted_file})
     except Exception as e:
         s.rollback()
         return jsonify({"error": str(e)}), 500
@@ -329,13 +286,22 @@ def delete_image(image_id: int):
 def list_persons():
     s = _session()
     try:
+        # Pick the sample face that has the LARGEST stored bbox (most prominent face)
         rows = s.execute(text("""
             SELECT
                 p.person_id,
                 p.display_name,
                 COUNT(DISTINCT f.image_id)  AS photo_count,
                 COUNT(f.face_id)            AS face_count,
-                MIN(f.face_id)              AS sample_face_id
+                (
+                    SELECT f2.face_id
+                    FROM   faces    f2
+                    JOIN   clusters c2 ON c2.cluster_id = f2.cluster_id
+                    WHERE  c2.person_id = p.person_id
+                      AND  f2.bbox_w > 0
+                    ORDER  BY f2.quality_score DESC
+                    LIMIT  1
+                ) AS sample_face_id
             FROM persons p
             LEFT JOIN clusters c ON c.person_id  = p.person_id
             LEFT JOIN faces    f ON f.cluster_id = c.cluster_id
@@ -381,8 +347,7 @@ def person_images(person_id: int):
             LIMIT  :lim OFFSET :off
         """), {"pid": person_id, "lim": per_page, "off": (page - 1) * per_page}).fetchall()
 
-        images = [_image_dict(r) for r in rows]
-        return jsonify({"images": images, "total": total})
+        return jsonify({"images": [_image_dict(r) for r in rows], "total": total})
     finally:
         s.close()
 
@@ -444,24 +409,23 @@ def merge_persons():
         s.close()
 
 
-# ── Face crops ────────────────────────────────────────────────────────────────
+# ── Face crops  ───────────────────────────────────────────────────────────────
 
 @app.get("/api/faces/<int:face_id>/crop")
 def face_crop(face_id: int):
     """
     Serve a cropped face thumbnail.
-    
-    FaceDB does not store bbox columns — we use the person's cluster center
-    to identify the face region by running InsightFace on the source image
-    and returning the best-matching face crop.
-    
-    For performance, we return a simple centre-cropped square if face detection
-    is unavailable (graceful degradation).
+
+    Uses the stored bbox_x/y/w/h columns written during processing.
+    This guarantees the correct face is shown for each person, even in
+    group photos where multiple people appear.
+
+    Falls back to a centre-square crop for legacy records (bbox = 0).
     """
     s = _session()
     try:
         row = s.execute(text("""
-            SELECT f.face_id, f.image_id, f.quality_score,
+            SELECT f.bbox_x, f.bbox_y, f.bbox_w, f.bbox_h,
                    i.file_path
             FROM   faces  f
             JOIN   images i ON i.image_id = f.image_id
@@ -477,62 +441,50 @@ def face_crop(face_id: int):
 
         try:
             import cv2
-            import numpy as np
             from PIL import Image as PILImage
 
-            img_bgr = cv2.imread(str(p))
-            if img_bgr is None:
+            img = cv2.imread(str(p))
+            if img is None:
                 abort(404)
 
-            h, w = img_bgr.shape[:2]
-            face_crop_bgr = None
+            h, w = img.shape[:2]
 
-            # Try InsightFace detection to get the actual face region
-            try:
-                import insightface
-                from insightface.app import FaceAnalysis
-                
-                # Use a module-level cached app to avoid repeated model loads
-                if not hasattr(face_crop, '_insight_app'):
-                    face_crop._insight_app = FaceAnalysis(
-                        name='buffalo_l',
-                        providers=['CPUExecutionProvider']
-                    )
-                    face_crop._insight_app.prepare(ctx_id=0, det_size=(320, 320))
-                
-                faces = face_crop._insight_app.get(img_bgr)
-                if faces:
-                    # Pick the largest face
-                    best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0]) * (f.bbox[3]-f.bbox[1]))
-                    x1, y1, x2, y2 = [int(v) for v in best_face.bbox]
-                    # Add 20% padding
-                    pad_x = int((x2 - x1) * 0.20)
-                    pad_y = int((y2 - y1) * 0.20)
-                    x1 = max(0, x1 - pad_x)
-                    y1 = max(0, y1 - pad_y)
-                    x2 = min(w, x2 + pad_x)
-                    y2 = min(h, y2 + pad_y)
-                    face_crop_bgr = img_bgr[y1:y2, x1:x2]
-            except Exception as detect_err:
-                logger.debug(f"InsightFace detection unavailable: {detect_err}")
+            bx = row.bbox_x or 0
+            by = row.bbox_y or 0
+            bw = row.bbox_w or 0
+            bh = row.bbox_h or 0
 
-            # Fallback: centre-square crop
-            if face_crop_bgr is None or face_crop_bgr.size == 0:
+            if bw > 10 and bh > 10:
+                # ── Stored bbox path (correct per-person crop) ──────────────
+                pad_x = int(bw * 0.22)
+                pad_y = int(bh * 0.22)
+                x1 = max(0, bx - pad_x)
+                y1 = max(0, by - pad_y)
+                x2 = min(w, bx + bw + pad_x)
+                y2 = min(h, by + bh + pad_y)
+            else:
+                # ── Fallback: centre-square crop (legacy / missing bbox) ────
                 side = min(w, h)
                 x1 = (w - side) // 2
                 y1 = (h - side) // 2
-                face_crop_bgr = img_bgr[y1:y1+side, x1:x1+side]
+                x2 = x1 + side
+                y2 = y1 + side
 
-            # Resize to 256×256 and return
-            face_crop_bgr = cv2.resize(face_crop_bgr, (256, 256), interpolation=cv2.INTER_LANCZOS4)
-            face_rgb = cv2.cvtColor(face_crop_bgr, cv2.COLOR_BGR2RGB)
-            pil = PILImage.fromarray(face_rgb)
+            crop = img[y1:y2, x1:x2]
+            if crop.size == 0:
+                abort(404)
+
+            crop     = cv2.resize(crop, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+
+            pil = PILImage.fromarray(crop_rgb)
             buf = io.BytesIO()
             pil.save(buf, format="JPEG", quality=85)
             buf.seek(0)
             return send_file(buf, mimetype="image/jpeg")
 
         except ImportError:
+            # cv2 not available — serve full image
             return send_file(str(p))
 
     finally:
@@ -543,19 +495,9 @@ def face_crop(face_id: int):
 
 @app.get("/api/duplicates")
 def find_duplicates():
-    """
-    Find near-duplicate images using perceptual hashing.
-    
-    Query params:
-      threshold (int, default 8): max Hamming distance to consider duplicate
-                                  0 = identical, lower = stricter
-      limit (int, default 100):   max pairs to return
-      
-    Returns pairs sorted by similarity (most similar first).
-    """
     threshold = int(request.args.get("threshold", 8))
     limit     = int(request.args.get("limit", 100))
-    
+
     s = _session()
     try:
         rows = s.execute(text(
@@ -563,8 +505,7 @@ def find_duplicates():
         )).fetchall()
     finally:
         s.close()
-    
-    # Compute hashes
+
     hashes = {}
     for row in rows:
         if not row.file_path or not Path(row.file_path).exists():
@@ -574,74 +515,55 @@ def find_duplicates():
             hashes[row.image_id] = {
                 "hash": h,
                 "file_path": row.file_path,
-                "filename": Path(row.file_path).name
+                "filename": Path(row.file_path).name,
             }
-    
-    # Find pairs below threshold
+
     ids = list(hashes.keys())
     pairs = []
-    
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             id_a, id_b = ids[i], ids[j]
             dist = _hamming_distance(hashes[id_a]["hash"], hashes[id_b]["hash"])
             if dist <= threshold:
                 pairs.append({
-                    "image_a": {
-                        "id": id_a,
-                        "file_path": hashes[id_a]["file_path"],
-                        "filename":  hashes[id_a]["filename"],
-                    },
-                    "image_b": {
-                        "id": id_b,
-                        "file_path": hashes[id_b]["file_path"],
-                        "filename":  hashes[id_b]["filename"],
-                    },
+                    "image_a": {"id": id_a, "file_path": hashes[id_a]["file_path"], "filename": hashes[id_a]["filename"]},
+                    "image_b": {"id": id_b, "file_path": hashes[id_b]["file_path"], "filename": hashes[id_b]["filename"]},
                     "distance": dist,
                     "similarity_pct": round((1 - dist / 256) * 100, 1),
                 })
-    
+
     pairs.sort(key=lambda p: p["distance"])
-    pairs = pairs[:limit]
-    
-    return jsonify({"pairs": pairs, "count": len(pairs), "threshold": threshold})
+    return jsonify({"pairs": pairs[:limit], "count": len(pairs), "threshold": threshold})
 
 
 @app.post("/api/duplicates/keep")
 def keep_duplicate():
-    """
-    Keep one image from a duplicate pair and delete the other.
-    
-    Body: { "keep_id": int, "delete_id": int, "delete_file": bool }
-    """
     body      = request.get_json(silent=True) or {}
     keep_id   = body.get("keep_id")
     delete_id = body.get("delete_id")
     del_file  = body.get("delete_file", False)
-    
+
     if not keep_id or not delete_id:
         return jsonify({"error": "keep_id and delete_id required"}), 400
-    
+
     s = _session()
     try:
         row = s.execute(
-            text("SELECT file_path FROM images WHERE image_id = :id"),
-            {"id": delete_id}
+            text("SELECT file_path FROM images WHERE image_id = :id"), {"id": delete_id}
         ).first()
         if not row:
             return jsonify({"error": "Delete target not found"}), 404
-        
+
         file_path = row.file_path
-        
-        s.execute(text("DELETE FROM faces WHERE image_id = :id"), {"id": delete_id})
+        s.execute(text("DELETE FROM faces  WHERE image_id = :id"), {"id": delete_id})
         s.execute(text("DELETE FROM images WHERE image_id = :id"), {"id": delete_id})
         s.commit()
-        
+
         deleted_file = False
         if del_file and file_path and Path(file_path).exists():
             Path(file_path).unlink()
             deleted_file = True
-        
+
         return jsonify({"ok": True, "deleted_id": delete_id, "file_deleted": deleted_file})
     except Exception as e:
         s.rollback()
@@ -650,20 +572,11 @@ def keep_duplicate():
         s.close()
 
 
-# ── Classify (Docs / Screenshots / Photos) ────────────────────────────────────
+# ── Classify ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/classify")
 def classify_images():
-    """
-    Classify all processed images into photo / screenshot / document.
-    
-    Query params:
-      limit (int, default 500): max images to classify per call
-      
-    Returns counts and a sample list of each category.
-    """
     limit = int(request.args.get("limit", 500))
-    
     s = _session()
     try:
         rows = s.execute(text(
@@ -672,21 +585,19 @@ def classify_images():
         ), {"lim": limit}).fetchall()
     finally:
         s.close()
-    
+
     results = {"photo": [], "screenshot": [], "document": []}
-    
     for row in rows:
         if not Path(row.file_path).exists():
             continue
         category = _classify_image(row.file_path)
         results[category].append({
-            "id":        row.image_id,
-            "file_path": row.file_path,
-            "filename":  Path(row.file_path).name,
+            "id": row.image_id, "file_path": row.file_path,
+            "filename": Path(row.file_path).name,
         })
-    
+
     return jsonify({
-        "counts": {k: len(v) for k, v in results.items()},
+        "counts":      {k: len(v) for k, v in results.items()},
         "photos":      results["photo"][:20],
         "screenshots": results["screenshot"][:50],
         "documents":   results["document"][:50],
@@ -696,28 +607,17 @@ def classify_images():
 
 @app.post("/api/classify/move")
 def move_classified():
-    """
-    Move screenshots and/or documents to review sub-folders inside the output dir.
-    
-    Body: {
-        "move_screenshots": true,
-        "move_documents": true,
-        "image_ids": [1, 2, 3]   // optional explicit list; if absent, auto-classify all
-    }
-    
-    Creates: <output_dir>/_Review_Screenshots/ and <output_dir>/_Review_Documents/
-    """
-    body = request.get_json(silent=True) or {}
+    body      = request.get_json(silent=True) or {}
     move_ss   = body.get("move_screenshots", True)
     move_docs = body.get("move_documents", True)
-    image_ids = body.get("image_ids")  # optional explicit list
-    
+    image_ids = body.get("image_ids")
+
     output_dir = config.get_output_directory()
     ss_dir   = output_dir / "_Review_Screenshots"
     docs_dir = output_dir / "_Review_Documents"
     ss_dir.mkdir(parents=True, exist_ok=True)
     docs_dir.mkdir(parents=True, exist_ok=True)
-    
+
     s = _session()
     try:
         if image_ids:
@@ -731,16 +631,13 @@ def move_classified():
             )).fetchall()
     finally:
         s.close()
-    
+
     moved = {"screenshot": 0, "document": 0, "errors": 0}
-    
     for row in rows:
         fp = Path(row.file_path)
         if not fp.exists():
             continue
-        
         category = _classify_image(row.file_path)
-        
         try:
             if category == 'screenshot' and move_ss:
                 dest = ss_dir / fp.name
@@ -755,10 +652,9 @@ def move_classified():
         except Exception as e:
             logger.error(f"Error moving {fp}: {e}")
             moved["errors"] += 1
-    
+
     return jsonify({
-        "ok": True,
-        "moved": moved,
+        "ok": True, "moved": moved,
         "screenshot_folder": str(ss_dir),
         "document_folder": str(docs_dir),
     })
@@ -768,7 +664,7 @@ def move_classified():
 
 @app.get("/api/search")
 def search():
-    q    = (request.args.get("q") or "").strip()
+    q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify({"persons": [], "images": []})
 
@@ -779,12 +675,10 @@ def search():
             "SELECT person_id, display_name FROM persons "
             "WHERE display_name ILIKE :q ORDER BY display_name LIMIT 10"
         ), {"q": like}).fetchall()
-
         images = s.execute(text(
             "SELECT image_id, file_path, processed_at FROM images "
             "WHERE file_path ILIKE :q ORDER BY processed_at DESC LIMIT 20"
         ), {"q": like}).fetchall()
-
         return jsonify({
             "persons": [{"id": r.person_id, "name": r.display_name} for r in persons],
             "images":  [_image_dict(r) for r in images],
@@ -803,12 +697,10 @@ def timeline():
             SELECT DATE_TRUNC('month', processed_at) AS month, COUNT(*) AS count
             FROM   images
             WHERE  processed_at IS NOT NULL
-            GROUP  BY month
-            ORDER  BY month DESC
+            GROUP  BY month ORDER BY month DESC
         """)).fetchall()
         return jsonify({"timeline": [
-            {"month": r.month.strftime("%Y-%m"), "count": r.count}
-            for r in rows
+            {"month": r.month.strftime("%Y-%m"), "count": r.count} for r in rows
         ]})
     finally:
         s.close()
@@ -825,8 +717,7 @@ def organised_folders():
     folders = []
     for d in sorted(output_dir.iterdir()):
         if d.is_dir():
-            imgs = [f for f in d.iterdir()
-                    if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
+            imgs = [f for f in d.iterdir() if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
             folders.append({"name": d.name, "count": len(imgs)})
 
     return jsonify({"folders": folders, "output_dir": str(output_dir)})
